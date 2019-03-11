@@ -10,33 +10,38 @@ using System.Threading.Tasks;
 
 namespace ARKit
 {
+  public static class Memory
+  {
+    public static Mat Frame { get; set; }
+  }
+
   public class Size
   {
-    private System.Drawing.Size size;
+    private System.Drawing.Size _size;
 
     public Size(int height, int width)
     {
-      this.size = new System.Drawing.Size(height, width);
+      this._size = new System.Drawing.Size(height, width);
     }
 
-    public System.Drawing.Size Dims => this.size;
+    public System.Drawing.Size Dims => this._size;
   }
 
   public class Frame
   {
-    private readonly int height, width;
-    private readonly byte[] image;
+    private readonly int _height, _width;
+    private readonly byte[] _image;
 
     public Frame(int height, int width, byte[] image)
     {
-      this.height = height;
-      this.width = width;
-      this.image = image;
+      this._height = height;
+      this._width = width;
+      this._image = image;
     }
 
-    public int Height => this.height;
-    public int Width => this.width;
-    public byte[] Image => this.image;
+    public int Height => this._height;
+    public int Width => this._width;
+    public byte[] Image => this._image;
   }
 
   // based on 2nd answer https://answers.unity.com/questions/52368/emgucv-inside-unity.html
@@ -53,7 +58,8 @@ namespace ARKit
 
     public Frame GetNextFrame()
     {
-      using (Image<Bgr, byte> nextFrame = this.cap.QueryFrame().ToImage<Bgr, byte>())
+      Memory.Frame = this.cap.QueryFrame();
+      using (Image<Bgr, byte> nextFrame = Memory.Frame.ToImage<Bgr, byte>())
       {
         System.Drawing.Bitmap currentFrame = nextFrame.ToBitmap();
         MemoryStream m = new MemoryStream();
@@ -97,27 +103,21 @@ namespace ARKit
   {
     private readonly bool unity;
     private readonly System.Drawing.Size patternSize;
-    private readonly Image<Bgr, byte> image;
     private Emgu.CV.Util.VectorOfPointF centers = new Emgu.CV.Util.VectorOfPointF();
 
-    public ChessboardDemo(Frame frame, bool unity = true)
+    public ChessboardDemo(bool unity = true)
     {
-      // converting byte[] to Image, referenced from https://stackoverflow.com/questions/29153967/convert-a-byte-into-an-emgu-opencv-image
-      this.image = new Image<Bgr, byte>(frame.Width, frame.Height)
-      {
-        Bytes = frame.Image
-      };
       this.unity = unity;
     }
 
-    public ChessboardDemo(Frame frame, Size patternSize, bool unity = true) : this(frame, unity)
+    public ChessboardDemo(Size patternSize, bool unity = true) : this(unity)
     {
       this.patternSize = patternSize.Dims;
     }
 
     public Frame RunDemo()
     {
-      Mat f = this.image.Mat;
+      Mat f = Memory.Frame.Clone();
       bool patternFound = CvInvoke.FindChessboardCorners(f, this.patternSize, centers);
 
       CvInvoke.DrawChessboardCorners(f, this.patternSize, centers, patternFound);
@@ -192,7 +192,7 @@ namespace ARKit
 
       for (; ; )
       {
-        frame = (new ChessboardDemo(capture.GetNextFrame(), patternSize, false)).RunDemo();
+        frame = (new ChessboardDemo(patternSize, false)).RunDemo();
         img = new Image<Bgr, byte>(frame.Width, frame.Height)
         {
           Bytes = frame.Image
