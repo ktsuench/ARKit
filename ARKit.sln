@@ -5,6 +5,8 @@ VisualStudioVersion = 15.0.28307.136
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ARKit", "ARKit\ARKit.csproj", "{1768A091-4C91-4C7C-BFF9-60A57E383288}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Test", "Test\Test.csproj", "{A5DC767C-0EA7-4911-A32E-A8798F19D013}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{1768A091-4C91-4C7C-BFF9-60A57E383288}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{1768A091-4C91-4C7C-BFF9-60A57E383288}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{1768A091-4C91-4C7C-BFF9-60A57E383288}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A5DC767C-0EA7-4911-A32E-A8798F19D013}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A5DC767C-0EA7-4911-A32E-A8798F19D013}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A5DC767C-0EA7-4911-A32E-A8798F19D013}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A5DC767C-0EA7-4911-A32E-A8798F19D013}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
