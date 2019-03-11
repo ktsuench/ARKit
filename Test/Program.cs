@@ -17,7 +17,13 @@ namespace Test
       //ARKit.Test.CaptureAndShow();
 
       // Test 3
-      ARKit.Test.RunChessboardDemo(new ARKit.Size(4, 7));
+      // ARKit.Test.RunChessboardDemo(new ARKit.Size(4, 7));
+
+      // Test 4
+      // ARKit.Test.CalibrateCamera(new ARKit.Size(4, 7), 30);
+
+      // Test 5
+      ARKit.Test.ReadIntrinsicsFile();
     }
   }
 }
