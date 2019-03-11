@@ -1,5 +1,6 @@
 ﻿using Emgu.CV;
 using Emgu.CV.CvEnum;
+using Emgu.CV.Features2D;
 using Emgu.CV.Structure;
 using Emgu.CV.Util;
 using System;
@@ -11,6 +12,63 @@ using System.Threading.Tasks;
 
 namespace ARKit
 {
+  // taken from https://stackoverflow.com/questions/32255440/how-can-i-get-and-set-pixel-values-of-an-emgucv-mat-image
+  public static class MatExtension
+  {
+    public static dynamic GetValue(this Mat mat, int row, int col)
+    {
+      var value = CreateElement(mat.Depth);
+      System.Runtime.InteropServices.Marshal.Copy(mat.DataPointer + (row * mat.Cols + col) * mat.ElementSize, value, 0, 1);
+      return value[0];
+    }
+
+    public static void SetValue(this Mat mat, int row, int col, dynamic value)
+    {
+      var target = CreateElement(mat.Depth, value);
+      System.Runtime.InteropServices.Marshal.Copy(target, 0, mat.DataPointer + (row * mat.Cols + col) * mat.ElementSize, 1);
+    }
+
+    private static dynamic CreateElement(DepthType depthType, dynamic value)
+    {
+      var element = CreateElement(depthType);
+      element[0] = value;
+      return element;
+    }
+
+    private static dynamic CreateElement(DepthType depthType)
+    {
+      if (depthType == DepthType.Cv8S)
+      {
+        return new sbyte[1];
+      }
+      if (depthType == DepthType.Cv8U)
+      {
+        return new byte[1];
+      }
+      if (depthType == DepthType.Cv16S)
+      {
+        return new short[1];
+      }
+      if (depthType == DepthType.Cv16U)
+      {
+        return new ushort[1];
+      }
+      if (depthType == DepthType.Cv32S)
+      {
+        return new int[1];
+      }
+      if (depthType == DepthType.Cv32F)
+      {
+        return new float[1];
+      }
+      if (depthType == DepthType.Cv64F)
+      {
+        return new double[1];
+      }
+      return new float[1];
+    }
+  }
+
   public static class Memory
   {
     public static Mat Frame { get; set; }
@@ -99,6 +157,85 @@ namespace ARKit
       UnityEngine.Vector3 offset = this.image.
     }
   }*/
+
+  public class FeaturePoints
+  {
+    private VectorOfKeyPoint _keypoints;
+    private Mat _descriptors;
+
+    public FeaturePoints() { }
+    public FeaturePoints(VectorOfKeyPoint keypoints, Mat descriptors)
+    {
+      this._keypoints = keypoints;
+      this._descriptors = descriptors;
+    }
+
+    public VectorOfKeyPoint KeyPoints { get => this._keypoints; }
+    public Mat Descriptors { get => this._descriptors; }
+
+    public static void ComputeAndSave(string imageFilePath, string keypointsFilePath)
+    {
+      VectorOfKeyPoint itemKeypoints = new VectorOfKeyPoint();
+      Mat itemDescriptors = new Mat(), image = CvInvoke.Imread(imageFilePath);
+
+      using (AKAZE akaze = new AKAZE())
+      //using (BFMatcher matcher = new BFMatcher(DistanceType.Hamming))
+      {
+        akaze.DetectAndCompute(image, null, itemKeypoints, itemDescriptors, false);
+      }
+
+      using (FileStorage fs = new FileStorage(keypointsFilePath,
+        FileStorage.Mode.Write | FileStorage.Mode.FormatYaml))
+      {
+        fs.Write(itemKeypoints.Size, "number-of-keypoints");
+        for (int i = 0; i < itemKeypoints.ToArray().Length; i++)
+        {
+          MKeyPoint m = itemKeypoints.ToArray()[i];
+          fs.Write(m.Angle, "keypoint-" + i + "-angle");
+          fs.Write(m.ClassId, "keypoint-" + i + "-classId");
+          fs.Write(m.Octave, "keypoint-" + i + "-octave");
+          fs.Write(m.Point.X, "keypoint-" + i + "-point-x");
+          fs.Write(m.Point.Y, "keypoint-" + i + "-point-y");
+          fs.Write(m.Response, "keypoint-" + i + "-response");
+          fs.Write(m.Size, "keypoint-" + i + "-size");
+        }
+        fs.Write(itemDescriptors, "descriptors");
+        fs.ReleaseAndGetString();
+      }
+    }
+
+    public static FeaturePoints ReadData(string filepath)
+    {
+      Mat descriptors = new Mat();
+      List<MKeyPoint> keypoints = new List<MKeyPoint>();
+
+      using (FileStorage fs = new FileStorage(
+        filepath, FileStorage.Mode.Read | FileStorage.Mode.FormatYaml))
+      {
+        int numKeypoints = fs.GetNode("number-of-keypoints").ReadInt();
+        for (int i = 0; i < numKeypoints; i++)
+        {
+          MKeyPoint m = new MKeyPoint
+          {
+            Angle = fs.GetNode("keypoint-" + i + "-angle").ReadFloat(),
+            ClassId = fs.GetNode("keypoint-" + i + "-classId").ReadInt(),
+            Octave = fs.GetNode("keypoint-" + i + "-octave").ReadInt(),
+            Point = new System.Drawing.PointF(
+              fs.GetNode("keypoint-" + i + "-point-x").ReadFloat(),
+              fs.GetNode("keypoint-" + i + "-point-y").ReadFloat()),
+            Response = fs.GetNode("keypoint-" + i + "-response").ReadFloat(),
+            Size = fs.GetNode("keypoint-" + i + "-size").ReadFloat()
+          };
+
+          keypoints.Add(m);
+        }
+        fs.GetNode("descriptors").ReadMat(descriptors);
+      }
+
+      return new FeaturePoints(
+        new VectorOfKeyPoint(keypoints.ToArray()), descriptors);
+    }
+  }
 
   public class CameraProperties
   {
@@ -392,13 +529,28 @@ namespace ARKit
        * refer to https://stackoverflow.com/questions/32255440/how-can-i-get-and-set-pixel-values-of-an-emgucv-mat-image
        * for accessing elements in a matrix
        */
-      var val1 = new double[1];
-      System.Runtime.InteropServices.Marshal.Copy(cc.CameraMatrix.DataPointer, val1, 0, 1);
-      System.Diagnostics.Debug.WriteLine(val1[0]);
+      System.Diagnostics.Debug.WriteLine(((Object)cc.CameraMatrix.GetValue(0, 0)).ToString());
+      System.Diagnostics.Debug.WriteLine(((Object)cc.DistortionCoefficients.GetValue(0, 0)).ToString());
+    }
 
-      var val2 = new double[1];
-      System.Runtime.InteropServices.Marshal.Copy(cc.DistortionCoefficients.DataPointer, val2, 0, 1);
-      System.Diagnostics.Debug.WriteLine(val2[0]);
+    public static void GetFeaturePoints(string imageFilePath, string keypointsFilePath)
+    {
+      FeaturePoints.ComputeAndSave(imageFilePath, keypointsFilePath);
+    }
+
+    public static void ReadFeaturePoints(string keypointsFilePath)
+    {
+      FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath);
+      MKeyPoint kp = fp.KeyPoints.ToArray()[0];
+
+      System.Diagnostics.Debug.WriteLine(kp.Angle);
+      System.Diagnostics.Debug.WriteLine(kp.ClassId);
+      System.Diagnostics.Debug.WriteLine(kp.Octave);
+      System.Diagnostics.Debug.WriteLine(kp.Point.X);
+      System.Diagnostics.Debug.WriteLine(kp.Point.Y);
+      System.Diagnostics.Debug.WriteLine(kp.Response);
+      System.Diagnostics.Debug.WriteLine(kp.Size);
+      System.Diagnostics.Debug.WriteLine(((Object)fp.Descriptors.GetValue(0, 0)).ToString());
     }
   }
 }

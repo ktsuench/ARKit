@@ -23,7 +23,13 @@ namespace Test
       // ARKit.Test.CalibrateCamera(new ARKit.Size(4, 7), 30);
 
       // Test 5
-      ARKit.Test.ReadIntrinsicsFile();
+      // ARKit.Test.ReadIntrinsicsFile();
+
+      // Test 6
+      // ARKit.Test.GetFeaturePoints("agenda.jpg", "keypoints.yml");
+
+      // Test 7
+      ARKit.Test.ReadFeaturePoints("keypoints.yml");
     }
   }
 }
