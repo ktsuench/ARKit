@@ -29,7 +29,10 @@ namespace Test
       // ARKit.Test.GetFeaturePoints("agenda.jpg", "keypoints.yml");
 
       // Test 7
-      ARKit.Test.ReadFeaturePoints("keypoints.yml");
+      // ARKit.Test.ReadFeaturePoints("keypoints.yml");
+
+      // Test 8
+      ARKit.Test.MatchFeatures("agenda.jpg", "keypoints.yml");
     }
   }
 }

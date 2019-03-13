@@ -160,18 +160,39 @@ namespace ARKit
 
   public class FeaturePoints
   {
-    private VectorOfKeyPoint _keypoints;
-    private Mat _descriptors;
+    private const float INLIER_THRESHOLD = 2.5f;
+    private const float NN_MATCH_RATIO = 0.8f;
+    private const float INLIER_USABLE_THRESHOLD = 0.05f;
 
-    public FeaturePoints() { }
-    public FeaturePoints(VectorOfKeyPoint keypoints, Mat descriptors)
+    private readonly bool _unity;
+    private readonly System.Drawing.Size _size;
+    private readonly VectorOfKeyPoint _keypoints;
+    private Mat _homographyMat;
+    private readonly Mat _descriptors;
+    private int _matches;
+    private int _inliers;
+    private double _inlierRatio;
+
+    public FeaturePoints(System.Drawing.Size size, VectorOfKeyPoint keypoints,
+      Mat descriptors, bool unity = true)
     {
+      this._unity = unity;
+      this._size = size;
       this._keypoints = keypoints;
       this._descriptors = descriptors;
+      this._homographyMat = new Mat();
+      this._matches = 0;
+      this._inliers = 0;
+      this._inlierRatio = 0;
     }
 
+    public System.Drawing.Size Size { get => this._size; }
     public VectorOfKeyPoint KeyPoints { get => this._keypoints; }
     public Mat Descriptors { get => this._descriptors; }
+    public Mat HomographyMatrix { get => this._homographyMat; }
+    public int Matches { get => this._matches; }
+    public int Inliers { get => this._inliers; }
+    public double InlierRatio { get => this._inlierRatio; }
 
     public static void ComputeAndSave(string imageFilePath, string keypointsFilePath)
     {
@@ -179,7 +200,6 @@ namespace ARKit
       Mat itemDescriptors = new Mat(), image = CvInvoke.Imread(imageFilePath);
 
       using (AKAZE akaze = new AKAZE())
-      //using (BFMatcher matcher = new BFMatcher(DistanceType.Hamming))
       {
         akaze.DetectAndCompute(image, null, itemKeypoints, itemDescriptors, false);
       }
@@ -187,7 +207,9 @@ namespace ARKit
       using (FileStorage fs = new FileStorage(keypointsFilePath,
         FileStorage.Mode.Write | FileStorage.Mode.FormatYaml))
       {
-        fs.Write(itemKeypoints.Size, "number-of-keypoints");
+        fs.Write(image.Height, "objectHeight");
+        fs.Write(image.Width, "objectWidth");
+        fs.Write(itemKeypoints.Size, "numberOfKeypoints");
         for (int i = 0; i < itemKeypoints.ToArray().Length; i++)
         {
           MKeyPoint m = itemKeypoints.ToArray()[i];
@@ -204,15 +226,18 @@ namespace ARKit
       }
     }
 
-    public static FeaturePoints ReadData(string filepath)
+    public static FeaturePoints ReadData(string filepath, bool unity = true)
     {
+      System.Drawing.Size size = new System.Drawing.Size();
       Mat descriptors = new Mat();
       List<MKeyPoint> keypoints = new List<MKeyPoint>();
 
       using (FileStorage fs = new FileStorage(
         filepath, FileStorage.Mode.Read | FileStorage.Mode.FormatYaml))
       {
-        int numKeypoints = fs.GetNode("number-of-keypoints").ReadInt();
+        size.Height = fs.GetNode("objectHeight").ReadInt();
+        size.Width = fs.GetNode("objectWidth").ReadInt();
+        int numKeypoints = fs.GetNode("numberOfKeypoints").ReadInt();
         for (int i = 0; i < numKeypoints; i++)
         {
           MKeyPoint m = new MKeyPoint
@@ -233,7 +258,147 @@ namespace ARKit
       }
 
       return new FeaturePoints(
-        new VectorOfKeyPoint(keypoints.ToArray()), descriptors);
+        size, new VectorOfKeyPoint(keypoints.ToArray()), descriptors, unity);
+    }
+
+    public void ComputeAndMatch()
+    {
+      VectorOfKeyPoint imageKeypoints = new VectorOfKeyPoint();
+      Mat imageDescriptors = new Mat(), image = Memory.Frame.Clone();
+      // DMatch type explanation
+      // https://stackoverflow.com/questions/13318853/opencv-drawmatches-queryidx-and-trainidx/13320083#13320083
+      VectorOfVectorOfDMatch nnMatches = new VectorOfVectorOfDMatch();
+      VectorOfPointF itemCoords = new VectorOfPointF(), imageCoords = new VectorOfPointF(),
+        inliers1 = new VectorOfPointF(), inliers2 = new VectorOfPointF();
+      Matrix<double> homographyMat;
+
+      using (AKAZE akaze = new AKAZE())
+      using (BFMatcher matcher = new BFMatcher(DistanceType.Hamming))
+      {
+        // find keypoints and describe their scale and orientation relative 
+        // to current image
+        akaze.DetectAndCompute(image, null, imageKeypoints, imageDescriptors, false);
+        // "find the item in the image" -> query match to train descriptor
+        /*
+         * finds the k best matches of query descriptors to train descriptors
+         * in this case at most 2 train descriptors for each query descriptor
+         */
+        matcher.Add(this._descriptors);
+        matcher.KnnMatch(imageDescriptors, nnMatches, 2, null);
+
+        // find key points which are distinct
+        /*
+         * distance of first pair of query and train descriptor match
+         * should be less than second pair for a specific query descriptor
+         */
+        for (int i = 0; i < nnMatches.Size; i++)
+        {
+          MDMatch first = nnMatches[i][0];
+          float dist1 = nnMatches[i][0].Distance; // distance between query and train descriptor
+          float dist2 = nnMatches[i][1].Distance; // distance between query and train descriptor
+
+          if (dist1 < NN_MATCH_RATIO * dist2)
+          {
+            itemCoords.Push(new System.Drawing.PointF[] {
+              this._keypoints[first.TrainIdx].Point
+            });
+            imageCoords.Push(new System.Drawing.PointF[] {
+              imageKeypoints[first.QueryIdx].Point
+            });
+          }
+        }
+
+        // only generate homography matrix if more than 50 matches found
+        if (itemCoords.Size > 50)
+        {
+          // determine homography matrix
+          this._homographyMat = CvInvoke.FindHomography(itemCoords, imageCoords);
+          homographyMat = new Matrix<double>(this._homographyMat.Rows, this._homographyMat.Cols);
+          this._homographyMat.CopyTo(homographyMat);
+
+          this._inliers = 0;
+
+          /*
+           * check that the matches fit the homography model
+           * by transforming the key points of the item and
+           * comparing with the detected key points in the image
+           * of where the item should be
+           */
+          for (int i = 0; i < itemCoords.Size; i++)
+          {
+            Mat col = Mat.Ones(3, 1, DepthType.Cv64F, 3);
+            Matrix<double> colm = new Matrix<double>(col.Rows, col.Cols);
+            col.SetValue(0, 0, itemCoords[i].X);
+            col.SetValue(1, 0, itemCoords[i].Y);
+
+            col.CopyTo(colm);
+            colm = homographyMat * colm;
+            colm /= colm[2, 0];
+
+            double dist = Math.Sqrt(
+              Math.Pow(colm[0, 0] - imageCoords[i].X, 2) +
+              Math.Pow(colm[1, 0] - imageCoords[i].Y, 2));
+
+            if (dist < INLIER_THRESHOLD)
+              /*{
+                inliers1.Push(new System.Drawing.PointF[] { itemCoords[i] });
+                inliers2.Push(new System.Drawing.PointF[] { imageCoords[i] });
+              }*/
+              this._inliers++;
+          }
+
+          // this._inliers = inliers1.Size();
+          this._matches = itemCoords.Size;
+          this._inlierRatio = this._inliers * 1.0 / this._matches;
+        }
+      }
+    }
+
+    public Frame DrawObjectBorder()
+    {
+      Mat frame = Memory.Frame.Clone();
+
+      if (this._inlierRatio > INLIER_USABLE_THRESHOLD)
+      {
+        VectorOfPointF imagePlaneCoords = new VectorOfPointF(new System.Drawing.PointF[] {
+          new System.Drawing.PointF(0, 0),
+          new System.Drawing.PointF(this._size.Width, 0),
+          new System.Drawing.PointF(0, this._size.Height),
+          new System.Drawing.PointF(this._size.Width, this._size.Height),
+        });
+        VectorOfPointF imagePoints = new VectorOfPointF();
+
+        // transform item points to image points
+        CvInvoke.PerspectiveTransform(imagePlaneCoords, imagePoints, this._homographyMat);
+
+        CvInvoke.Line(frame,
+          new System.Drawing.Point((int)imagePoints[0].X, (int)imagePoints[0].Y),
+          new System.Drawing.Point((int)imagePoints[1].X, (int)imagePoints[1].Y),
+          new Rgb(255, 0, 0).MCvScalar, 5);
+        CvInvoke.Line(frame,
+          new System.Drawing.Point((int)imagePoints[0].X, (int)imagePoints[0].Y),
+          new System.Drawing.Point((int)imagePoints[2].X, (int)imagePoints[2].Y),
+          new Rgb(0, 255, 0).MCvScalar, 5);
+        CvInvoke.Line(frame,
+          new System.Drawing.Point((int)imagePoints[2].X, (int)imagePoints[2].Y),
+          new System.Drawing.Point((int)imagePoints[3].X, (int)imagePoints[3].Y),
+          new Rgb(255, 0, 0).MCvScalar, 5);
+        CvInvoke.Line(frame,
+          new System.Drawing.Point((int)imagePoints[1].X, (int)imagePoints[1].Y),
+          new System.Drawing.Point((int)imagePoints[3].X, (int)imagePoints[3].Y),
+          new Rgb(0, 255, 0).MCvScalar, 5);
+      }
+
+      using (Image<Bgr, byte> nextFrame = frame.ToImage<Bgr, byte>())
+      {
+        System.Drawing.Bitmap currentFrame = nextFrame.ToBitmap();
+        MemoryStream m = new MemoryStream();
+        System.Drawing.Imaging.ImageFormat format =
+          !this._unity ? System.Drawing.Imaging.ImageFormat.Bmp : currentFrame.RawFormat;
+        currentFrame.Save(m, format);
+
+        return new Frame(currentFrame.Height, currentFrame.Width, m.ToArray());
+      }
     }
   }
 
@@ -540,7 +705,7 @@ namespace ARKit
 
     public static void ReadFeaturePoints(string keypointsFilePath)
     {
-      FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath);
+      FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath, false);
       MKeyPoint kp = fp.KeyPoints.ToArray()[0];
 
       System.Diagnostics.Debug.WriteLine(kp.Angle);
@@ -551,6 +716,39 @@ namespace ARKit
       System.Diagnostics.Debug.WriteLine(kp.Response);
       System.Diagnostics.Debug.WriteLine(kp.Size);
       System.Diagnostics.Debug.WriteLine(((Object)fp.Descriptors.GetValue(0, 0)).ToString());
+    }
+
+    public static void MatchFeatures(string imageFilePath, string keypointsFilePath)
+    {
+      FeaturePoints.ComputeAndSave(imageFilePath, keypointsFilePath);
+      FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath, false);
+
+      Camera capture = new Camera(0, false);
+      Frame frame;
+      Image<Bgr, byte> img;
+
+      String win1 = "Feature Matching Demo";
+      CvInvoke.NamedWindow(win1);
+
+      for (; ; )
+      {
+        capture.GetNextFrame();
+        fp.ComputeAndMatch();
+        frame = fp.DrawObjectBorder();
+        img = new Image<Bgr, byte>(frame.Width, frame.Height)
+        {
+          Bytes = frame.Image
+        };
+
+        System.Diagnostics.Debug.WriteLine("Matches " + fp.Matches);
+        System.Diagnostics.Debug.WriteLine("Inliers " + fp.Inliers);
+        System.Diagnostics.Debug.WriteLine("Inlier Ratio " + fp.InlierRatio);
+
+        CvInvoke.Imshow(win1, img);
+        if (27 == CvInvoke.WaitKey(100)) break; // 27 is ESC key
+      }
+
+      CvInvoke.DestroyWindow(win1);
     }
   }
 }
