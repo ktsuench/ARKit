@@ -14,7 +14,7 @@ namespace Test
       //ARKit.Test.HelloWord();
 
       // Test 2
-      //ARKit.Test.CaptureAndShow();
+      ARKit.Test.CaptureAndShow();
 
       // Test 3
       // ARKit.Test.RunChessboardDemo(new ARKit.Size(4, 7));
@@ -32,7 +32,7 @@ namespace Test
       // ARKit.Test.ReadFeaturePoints("keypoints.yml");
 
       // Test 8
-      ARKit.Test.MatchFeatures("agenda.jpg", "keypoints.yml");
+      // ARKit.Test.MatchFeatures("agenda.jpg", "keypoints.yml");
     }
   }
 }

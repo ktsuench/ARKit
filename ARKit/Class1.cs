@@ -109,11 +109,22 @@ namespace ARKit
     private readonly VideoCapture cap;
     private readonly bool unity;
 
-    public Camera(int cameraId = 0, bool unity = true)
+    public Camera(int cameraId = 0, Size size = null, bool unity = true)
     {
       this.cap = new VideoCapture(cameraId);
+
+      if (size.Dims.Height != 0 && size.Dims.Width != 0)
+      {
+        this.cap.SetCaptureProperty(CapProp.FrameHeight, size.Dims.Height);
+        this.cap.SetCaptureProperty(CapProp.FrameWidth, size.Dims.Width);
+      }
+
       this.unity = unity;
     }
+
+    public Camera(int cameraId = 0, bool unity = true) : this(cameraId, null, unity) { }
+    public Camera(Size size, bool unity = true) : this(0, size, unity) { }
+    public Camera(bool unity) : this(0, unity) { }
 
     public Frame GetNextFrame()
     {
@@ -593,12 +604,12 @@ namespace ARKit
 
     public static void CaptureAndShow()
     {
-      Camera capture = new Camera(0, false);
+      Camera capture = new Camera(new Size(1440, 2560), false);
       Frame frame;
       Image<Bgr, byte> img;
 
       String win1 = "Camera Demo";
-      CvInvoke.NamedWindow(win1);
+      CvInvoke.NamedWindow(win1, NamedWindowType.Normal);
 
       for (; ; )
       {
@@ -608,6 +619,7 @@ namespace ARKit
           Bytes = frame.Image
         };
 
+        CvInvoke.Flip(img, img, FlipType.Vertical);
         CvInvoke.Imshow(win1, img);
         if (27 == CvInvoke.WaitKey(100)) break; // 27 is ESC key
       }
