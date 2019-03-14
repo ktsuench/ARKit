@@ -172,8 +172,18 @@ namespace ARKit
   public class FeaturePoints
   {
     private const float INLIER_THRESHOLD = 2.5f;
-    private const float NN_MATCH_RATIO = 0.8f;
     private const float INLIER_USABLE_THRESHOLD = 0.05f;
+    private const int KTH_NEAREST_NEIGHBOUR = 2;
+    private const int MAX_PYRAMID_LEVELS = 10; // default used in OpenCV
+    private const int MATCHES_REQUIRED = 50;
+    private const float NN_MATCH_RATIO = 0.8f;
+    // either finish by 30 iterations or search window moved less than epsilon of 0.01
+    private readonly MCvTermCriteria TERMINATION_CRITERIA =
+      new MCvTermCriteria(30, 0.01); // default used in OpenCV
+    private readonly System.Drawing.Size SEARCH_WINDOW_SIZE =
+      new System.Drawing.Size(21, 21); // default used in OpenCV
+    private const float ACCEPTABLE_TRACKING_AVERAGE_ERROR = 2.0f;
+    public enum FeatureState { MATCHING, TRACKING };
 
     private readonly bool _unity;
     private readonly System.Drawing.Size _size;
@@ -183,6 +193,13 @@ namespace ARKit
     private int _matches;
     private int _inliers;
     private double _inlierRatio;
+    private VectorOfPointF _imagePoints;
+    private Mat _previousFrame;
+    private VectorOfPointF _previousPoints;
+    private byte[] _trackerStatus;
+    private Single[] _trackerErr;
+    private float _trackerAvgErr;
+    private FeatureState _state;
 
     public FeaturePoints(System.Drawing.Size size, VectorOfKeyPoint keypoints,
       Mat descriptors, bool unity = true)
@@ -195,6 +212,13 @@ namespace ARKit
       this._matches = 0;
       this._inliers = 0;
       this._inlierRatio = 0;
+      this._imagePoints = new VectorOfPointF();
+      this._previousFrame = new Mat();
+      this._previousPoints = new VectorOfPointF();
+      this._trackerStatus = new byte[] { };
+      this._trackerErr = new float[] { };
+      this._trackerAvgErr = 0;
+      this._state = FeatureState.MATCHING;
     }
 
     public System.Drawing.Size Size { get => this._size; }
@@ -204,11 +228,15 @@ namespace ARKit
     public int Matches { get => this._matches; }
     public int Inliers { get => this._inliers; }
     public double InlierRatio { get => this._inlierRatio; }
+    public float TrackerAverageError { get => this._trackerAvgErr; }
+    public FeatureState State { get => this._state; }
 
     public static void ComputeAndSave(string imageFilePath, string keypointsFilePath)
     {
       VectorOfKeyPoint itemKeypoints = new VectorOfKeyPoint();
       Mat itemDescriptors = new Mat(), image = CvInvoke.Imread(imageFilePath);
+
+      CvInvoke.CvtColor(image, image, ColorConversion.Rgb2Gray);
 
       using (AKAZE akaze = new AKAZE())
       {
@@ -279,9 +307,15 @@ namespace ARKit
       // DMatch type explanation
       // https://stackoverflow.com/questions/13318853/opencv-drawmatches-queryidx-and-trainidx/13320083#13320083
       VectorOfVectorOfDMatch nnMatches = new VectorOfVectorOfDMatch();
-      VectorOfPointF itemCoords = new VectorOfPointF(), imageCoords = new VectorOfPointF(),
-        inliers1 = new VectorOfPointF(), inliers2 = new VectorOfPointF();
+      VectorOfPointF itemCoords = new VectorOfPointF();
+      VectorOfPointF imageCoords = new VectorOfPointF();
+      VectorOfPointF inliers1 = new VectorOfPointF();
+      VectorOfPointF inliers2 = new VectorOfPointF();
       Matrix<double> homographyMat;
+
+      CvInvoke.CvtColor(image, image, ColorConversion.Rgb2Gray);
+
+      this._state = FeatureState.MATCHING;
 
       using (AKAZE akaze = new AKAZE())
       using (BFMatcher matcher = new BFMatcher(DistanceType.Hamming))
@@ -295,7 +329,7 @@ namespace ARKit
          * in this case at most 2 train descriptors for each query descriptor
          */
         matcher.Add(this._descriptors);
-        matcher.KnnMatch(imageDescriptors, nnMatches, 2, null);
+        matcher.KnnMatch(imageDescriptors, nnMatches, KTH_NEAREST_NEIGHBOUR, null);
 
         // find key points which are distinct
         /*
@@ -320,10 +354,11 @@ namespace ARKit
         }
 
         // only generate homography matrix if more than 50 matches found
-        if (itemCoords.Size > 50)
+        if (itemCoords.Size > MATCHES_REQUIRED)
         {
           // determine homography matrix
-          this._homographyMat = CvInvoke.FindHomography(itemCoords, imageCoords);
+          this._homographyMat = CvInvoke.FindHomography(itemCoords, imageCoords,
+            HomographyMethod.Ransac, INLIER_THRESHOLD);
           homographyMat = new Matrix<double>(this._homographyMat.Rows, this._homographyMat.Cols);
           this._homographyMat.CopyTo(homographyMat);
 
@@ -362,12 +397,20 @@ namespace ARKit
           this._matches = itemCoords.Size;
           this._inlierRatio = this._inliers * 1.0 / this._matches;
         }
+        else
+        {
+          this._matches = 0;
+          this._inliers = 0;
+          this._inlierRatio = 0;
+        }
       }
+
+      this._previousFrame = Memory.Frame.Clone();
     }
 
-    public Frame DrawObjectBorder()
+    public void FindObject()
     {
-      Mat frame = Memory.Frame.Clone();
+      this._imagePoints.Clear();
 
       if (this._inlierRatio > INLIER_USABLE_THRESHOLD)
       {
@@ -377,26 +420,125 @@ namespace ARKit
           new System.Drawing.PointF(0, this._size.Height),
           new System.Drawing.PointF(this._size.Width, this._size.Height),
         });
-        VectorOfPointF imagePoints = new VectorOfPointF();
 
         // transform item points to image points
-        CvInvoke.PerspectiveTransform(imagePlaneCoords, imagePoints, this._homographyMat);
+        CvInvoke.PerspectiveTransform(imagePlaneCoords, this._imagePoints, this._homographyMat);
+      }
 
+      this._previousPoints.Clear();
+      this._previousPoints.Push(this._imagePoints.ToArray());
+    }
+
+    public void TrackObject()
+    {
+      Mat previousFrame = this._previousFrame.Clone();
+      Mat currentFrame = Memory.Frame.Clone();
+      System.Drawing.PointF[] imagePoints = new System.Drawing.PointF[] { };
+      Matrix<double> homographyMat;
+      int inliers = 0;
+
+      this._trackerAvgErr = 0;
+
+      if (this._previousPoints.Size > 0)
+      {
+        Array.Clear(this._trackerStatus, 0, this._trackerStatus.Length);
+        Array.Clear(this._trackerErr, 0, this._trackerErr.Length);
+
+        this._state = FeatureState.TRACKING;
+
+        CvInvoke.CvtColor(previousFrame, previousFrame, ColorConversion.Rgb2Gray);
+        CvInvoke.CvtColor(currentFrame, currentFrame, ColorConversion.Rgb2Gray);
+
+        CvInvoke.CalcOpticalFlowPyrLK(
+          previousFrame, currentFrame,
+          this._previousPoints.ToArray(),
+          SEARCH_WINDOW_SIZE, MAX_PYRAMID_LEVELS, TERMINATION_CRITERIA,
+          out imagePoints, out this._trackerStatus, out this._trackerErr
+        );
+
+        foreach (float err in this._trackerErr)
+          this._trackerAvgErr += err;
+
+        this._trackerAvgErr /= this._trackerErr.Length;
+
+        if (this._trackerAvgErr > ACCEPTABLE_TRACKING_AVERAGE_ERROR)
+        {
+          this.ComputeAndMatch();
+          this.FindObject();
+        }
+        else
+        {
+          homographyMat = new Matrix<double>(this._homographyMat.Rows, this._homographyMat.Cols);
+          this._homographyMat.CopyTo(homographyMat);
+
+          /*
+           * check that the matches fit the homography model
+           * by transforming the key points of the item and
+           * comparing with the detected key points in the image
+           * of where the item should be
+           */
+          for (int i = 0; i < imagePoints.Length; i++)
+          {
+            Mat col = Mat.Ones(3, 1, DepthType.Cv64F, 3);
+            Matrix<double> colm = new Matrix<double>(imagePoints.Length, 1);
+            col.SetValue(0, 0, this._previousPoints[i].X);
+            col.SetValue(1, 0, this._previousPoints[i].Y);
+
+            col.CopyTo(colm);
+            colm = homographyMat * colm;
+            colm /= colm[2, 0];
+
+            double dist = Math.Sqrt(
+              Math.Pow(colm[0, 0] - imagePoints[i].X, 2) +
+              Math.Pow(colm[1, 0] - imagePoints[i].Y, 2));
+
+            if (dist < INLIER_THRESHOLD)
+              inliers++;
+          }
+
+          if (inliers != imagePoints.Length)
+          {
+            this.ComputeAndMatch();
+            this.FindObject();
+          }
+          else
+          {
+            this._previousPoints.Clear();
+            this._previousPoints.Push(this._imagePoints.ToArray());
+            this._imagePoints.Clear();
+            this._imagePoints.Push(imagePoints);
+            this._previousFrame = Memory.Frame.Clone();
+          }
+        }
+      }
+      else
+      {
+        this.ComputeAndMatch();
+        this.FindObject();
+      }
+    }
+
+    public Frame DrawObjectBorder()
+    {
+      Mat frame = Memory.Frame.Clone();
+
+      if (this._inlierRatio > INLIER_USABLE_THRESHOLD)
+      {
         CvInvoke.Line(frame,
-          new System.Drawing.Point((int)imagePoints[0].X, (int)imagePoints[0].Y),
-          new System.Drawing.Point((int)imagePoints[1].X, (int)imagePoints[1].Y),
+          new System.Drawing.Point((int)this._imagePoints[0].X, (int)this._imagePoints[0].Y),
+          new System.Drawing.Point((int)this._imagePoints[1].X, (int)this._imagePoints[1].Y),
           new Rgb(255, 0, 0).MCvScalar, 5);
         CvInvoke.Line(frame,
-          new System.Drawing.Point((int)imagePoints[0].X, (int)imagePoints[0].Y),
-          new System.Drawing.Point((int)imagePoints[2].X, (int)imagePoints[2].Y),
+          new System.Drawing.Point((int)this._imagePoints[0].X, (int)this._imagePoints[0].Y),
+          new System.Drawing.Point((int)this._imagePoints[2].X, (int)this._imagePoints[2].Y),
           new Rgb(0, 255, 0).MCvScalar, 5);
         CvInvoke.Line(frame,
-          new System.Drawing.Point((int)imagePoints[2].X, (int)imagePoints[2].Y),
-          new System.Drawing.Point((int)imagePoints[3].X, (int)imagePoints[3].Y),
+          new System.Drawing.Point((int)this._imagePoints[2].X, (int)this._imagePoints[2].Y),
+          new System.Drawing.Point((int)this._imagePoints[3].X, (int)this._imagePoints[3].Y),
           new Rgb(255, 0, 0).MCvScalar, 5);
         CvInvoke.Line(frame,
-          new System.Drawing.Point((int)imagePoints[1].X, (int)imagePoints[1].Y),
-          new System.Drawing.Point((int)imagePoints[3].X, (int)imagePoints[3].Y),
+          new System.Drawing.Point((int)this._imagePoints[1].X, (int)this._imagePoints[1].Y),
+          new System.Drawing.Point((int)this._imagePoints[3].X, (int)this._imagePoints[3].Y),
           new Rgb(0, 255, 0).MCvScalar, 5);
       }
 
@@ -730,22 +872,23 @@ namespace ARKit
       System.Diagnostics.Debug.WriteLine(((Object)fp.Descriptors.GetValue(0, 0)).ToString());
     }
 
-    public static void MatchFeatures(string imageFilePath, string keypointsFilePath)
+    public static void MatchFeatures(string imageFilePath, string keypointsFilePath, Size size)
     {
       FeaturePoints.ComputeAndSave(imageFilePath, keypointsFilePath);
       FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath, false);
 
-      Camera capture = new Camera(0, false);
+      Camera capture = new Camera(0, size, false);
       Frame frame;
       Image<Bgr, byte> img;
 
       String win1 = "Feature Matching Demo";
-      CvInvoke.NamedWindow(win1);
+      CvInvoke.NamedWindow(win1, NamedWindowType.Normal);
 
       for (; ; )
       {
         capture.GetNextFrame();
         fp.ComputeAndMatch();
+        fp.FindObject();
         frame = fp.DrawObjectBorder();
         img = new Image<Bgr, byte>(frame.Width, frame.Height)
         {
@@ -756,11 +899,69 @@ namespace ARKit
         System.Diagnostics.Debug.WriteLine("Inliers " + fp.Inliers);
         System.Diagnostics.Debug.WriteLine("Inlier Ratio " + fp.InlierRatio);
 
+        CvInvoke.Flip(img, img, FlipType.Vertical);
         CvInvoke.Imshow(win1, img);
         if (27 == CvInvoke.WaitKey(100)) break; // 27 is ESC key
       }
 
       CvInvoke.DestroyWindow(win1);
+    }
+
+    public static void TrackFeatures(string imageFilePath, string keypointsFilePath, Size size)
+    {
+      FeaturePoints.ComputeAndSave(imageFilePath, keypointsFilePath);
+      FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath, false);
+      int ntracks = 0, nmatches = 0;
+
+      Camera capture = new Camera(0, size, false);
+      Frame frame;
+      Image<Bgr, byte> img;
+
+      String win1 = "Feature Tracking Demo";
+      CvInvoke.NamedWindow(win1, NamedWindowType.Normal);
+
+      for (int i = 0; ; i++)
+      {
+        capture.GetNextFrame();
+
+        if (i == 0)
+        {
+          fp.ComputeAndMatch();
+          fp.FindObject();
+        }
+        else
+          fp.TrackObject();
+
+        frame = fp.DrawObjectBorder();
+        img = new Image<Bgr, byte>(frame.Width, frame.Height)
+        {
+          Bytes = frame.Image
+        };
+
+        if (fp.State == FeaturePoints.FeatureState.MATCHING)
+        {
+          nmatches++;
+          System.Diagnostics.Debug.Write("Detecting, Describing, and Matching");
+          System.Diagnostics.Debug.Write("\t\tMatches " + fp.Matches);
+          System.Diagnostics.Debug.Write("\t\tInliers " + fp.Inliers);
+          System.Diagnostics.Debug.WriteLine("\t\tInlier Ratio " + fp.InlierRatio);
+        }
+        else
+        {
+          ntracks++;
+          System.Diagnostics.Debug.Write("Tracking");
+          System.Diagnostics.Debug.WriteLine("\t\tAverage Error " + fp.TrackerAverageError);
+        }
+
+        CvInvoke.Flip(img, img, FlipType.Vertical);
+        CvInvoke.Imshow(win1, img);
+        if (27 == CvInvoke.WaitKey(100)) break; // 27 is ESC key
+      }
+
+      CvInvoke.DestroyWindow(win1);
+
+      System.Diagnostics.Debug.WriteLine("Frames spent matching: " + nmatches);
+      System.Diagnostics.Debug.WriteLine("Frames spent tracking: " + ntracks);
     }
   }
 }
