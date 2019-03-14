@@ -35,7 +35,7 @@ namespace Test
       // ARKit.Test.MatchFeatures("agenda.jpg", "keypoints.yml", new ARKit.Size(720, 1080));
 
       // Test 9
-      ARKit.Test.TrackFeatures("agenda.jpg", "keypoints.yml", new ARKit.Size(720, 1080));
+      ARKit.Test.TrackFeatures("agenda_diff_lighting_lowdef.jpg", "keypoints.yml", new ARKit.Size(720, 1080));
     }
   }
 }
