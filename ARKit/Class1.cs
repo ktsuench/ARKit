@@ -178,9 +178,9 @@ namespace ARKit
   {
     private readonly VectorOfPointF BORDER;
     private const float INLIER_THRESHOLD = 2.5f;
-    private const float INLIER_USABLE_THRESHOLD = 0.05f;
+    private const float INLIER_USABLE_THRESHOLD = 0.6f;
     private const int KTH_NEAREST_NEIGHBOUR = 2;
-    private const int MAX_PYRAMID_LEVELS = 10; // default used in OpenCV
+    private const int MAX_PYRAMID_LEVELS = 3; // default used in OpenCV
     private const int MATCHES_REQUIRED = 50;
     private const float NN_MATCH_RATIO = 0.8f;
     // either finish by 30 iterations or search window moved less than epsilon of 0.01
@@ -188,7 +188,7 @@ namespace ARKit
       new MCvTermCriteria(30, 0.01); // default used in OpenCV
     private readonly System.Drawing.Size SEARCH_WINDOW_SIZE =
       new System.Drawing.Size(21, 21); // default used in OpenCV
-    private const float ACCEPTABLE_TRACKING_AVERAGE_ERROR = 4.0f;
+    private const float ACCEPTABLE_TRACKING_AVERAGE_ERROR = 20.0f;
     public enum FeatureState { MATCHING, TRACKING };
 
     private readonly bool _unity;
@@ -352,8 +352,8 @@ namespace ARKit
 
         if (dist < INLIER_THRESHOLD)
           /*{
-            inliers1.Push(new System.Drawing.PointF[] { itemCoords[i] });
-            inliers2.Push(new System.Drawing.PointF[] { imageCoords[i] });
+            inliers1.Push(new System.Drawing.PointF[] { trainCoords[i] });
+            inliers2.Push(new System.Drawing.PointF[] { queryCoords[i] });
           }*/
           inliers++;
       }
@@ -370,6 +370,8 @@ namespace ARKit
       VectorOfVectorOfDMatch nnMatches = new VectorOfVectorOfDMatch();
       VectorOfPointF itemCoords = new VectorOfPointF();
       VectorOfPointF imageCoords = new VectorOfPointF();
+      int inliers;
+      double inlierRatio;
 
       CvInvoke.CvtColor(image, image, ColorConversion.Rgb2Gray);
 
@@ -414,13 +416,14 @@ namespace ARKit
         // only generate homography matrix if more than 50 matches found
         if (itemCoords.Size > MATCHES_REQUIRED)
         {
-          // this._inliers = inliers1.Size();
-          this._inliers = CheckHomography(itemCoords, imageCoords);
-          this._matches = itemCoords.Size;
-          this._inlierRatio = this._inliers * 1.0 / this._matches;
+          inliers = CheckHomography(itemCoords, imageCoords);
+          inlierRatio = inliers * 1.0 / itemCoords.Size;
 
-          if (this._inliers > INLIER_USABLE_THRESHOLD)
+          if (inlierRatio > INLIER_USABLE_THRESHOLD)
           {
+            this._inliers = inliers;
+            this._matches = itemCoords.Size;
+            this._inlierRatio = inlierRatio;
             this._previousPoints.Clear();
             this._previousPoints.Push(imageCoords.ToArray());
             this._previousBorderPoints.Clear();
