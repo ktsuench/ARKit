@@ -545,6 +545,42 @@ namespace ARKit
         return new Frame(currentFrame.Height, currentFrame.Width, m.ToArray());
       }
     }
+
+    public bool GetProjectionMatrix(out UnityEngine.Matrix4x4 projectionMatrix)
+    {
+      projectionMatrix = new UnityEngine.Matrix4x4();
+
+      try
+      {
+        if (this._homographyMat.Size.Height > 0 && this._homographyMat.Size.Width > 0)
+        {
+          projectionMatrix.m00 = (float)this._homographyMat.GetValue(0, 0);
+          projectionMatrix.m01 = (float)this._homographyMat.GetValue(0, 1);
+          projectionMatrix.m02 = 0;
+          projectionMatrix.m03 = (float)this._homographyMat.GetValue(0, 2);
+          projectionMatrix.m10 = (float)this._homographyMat.GetValue(1, 0);
+          projectionMatrix.m11 = (float)this._homographyMat.GetValue(1, 1);
+          projectionMatrix.m12 = 0;
+          projectionMatrix.m13 = (float)this._homographyMat.GetValue(1, 2);
+          projectionMatrix.m20 = 0;
+          projectionMatrix.m21 = 0;
+          projectionMatrix.m22 = 1;
+          projectionMatrix.m23 = 0;
+          projectionMatrix.m30 = (float)this._homographyMat.GetValue(2, 0);
+          projectionMatrix.m31 = (float)this._homographyMat.GetValue(2, 1);
+          projectionMatrix.m32 = 0;
+          projectionMatrix.m33 = (float)this._homographyMat.GetValue(2, 2);
+
+          return true;
+        }
+      }
+      catch (Exception ex)
+      {
+        // do nothing
+      }
+
+      return false;
+    }
   }
 
   public class CameraProperties
