@@ -442,8 +442,8 @@ namespace ARKit
         }
       }
     }
-
-    public void FindObject()
+    
+    public bool FindObject()
     {
       if (this._inlierRatio > INLIER_USABLE_THRESHOLD && this._previousBorderPoints.Size > 0)
       {
@@ -458,7 +458,11 @@ namespace ARKit
           this._previousBorderPoints.Push(this._borderPoints.ToArray());
           this._replacePreviousBorderPoints = false;
         }
+
+        return true;
       }
+
+      return false;
     }
 
     public void TrackObject()
