@@ -111,13 +111,18 @@ namespace ARKit
 
     public Camera(int cameraId = 0, Size size = null, bool unity = true)
     {
-      this.cap = new VideoCapture(cameraId);
+      this.cap = new VideoCapture(cameraId + CaptureType.Msmf);
 
-      if (size.Dims.Height != 0 && size.Dims.Width != 0)
+      if (this.cap.IsOpened)
       {
-        this.cap.SetCaptureProperty(CapProp.FrameHeight, size.Dims.Height);
-        this.cap.SetCaptureProperty(CapProp.FrameWidth, size.Dims.Width);
+        if (size.Dims.Height != 0 && size.Dims.Width != 0)
+        {
+          this.cap.SetCaptureProperty(CapProp.FrameHeight, size.Dims.Height);
+          this.cap.SetCaptureProperty(CapProp.FrameWidth, size.Dims.Width);
+        }
       }
+      else
+        throw new Exception("Cannot open camera with the given params");
 
       this.unity = unity;
     }
