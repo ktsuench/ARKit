@@ -510,12 +510,17 @@ namespace ARKit
       else this.ComputeAndMatch();
     }
 
-    public Frame DrawObjectBorder()
+    public Frame DrawObjectBorder(bool drawCenter = false)
     {
       Mat frame = Memory.Frame.Clone();
 
       if (this._inlierRatio > INLIER_USABLE_THRESHOLD && this._borderPoints.Size > 0)
       {
+        if (drawCenter)
+        {
+          this.DrawOrientationAxis(Memory.Frame.Clone(), out frame);
+        }
+
         CvInvoke.Line(frame,
           new System.Drawing.Point((int)this._borderPoints[0].X, (int)this._borderPoints[0].Y),
           new System.Drawing.Point((int)this._borderPoints[1].X, (int)this._borderPoints[1].Y),
