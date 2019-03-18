@@ -634,6 +634,24 @@ namespace ARKit
 
       return foundCenter;
     }
+
+    private System.Drawing.PointF FindMidpoint(System.Drawing.PointF a, System.Drawing.PointF b)
+    {
+      /*
+      float slope = (b.Y - a.Y) / (b.X - a.X);
+      double magnitude = Math.Sqrt(Math.Pow(b.X - a.X, 2) + Math.Pow(b.Y - a.Y, 2));
+      System.Drawing.PointF midpoint = new System.Drawing.PointF();
+
+      midpoint.Y = a.Y + (float) Math.Sqrt(Math.Pow(0.5 * slope * magnitude, 2) / (1 + Math.Pow(magnitude, 2)));
+      midpoint.X = a.X + (float) Math.Sqrt(Math.Pow(0.5 * magnitude, 2) - Math.Pow(midpoint.Y - a.Y, 2));
+      */
+      System.Drawing.PointF midpoint = new System.Drawing.PointF(
+        (a.X + b.X) / 2,
+        (a.Y + b.Y) / 2
+      );
+
+      return midpoint;
+    }
   }
 
   public class CameraProperties
