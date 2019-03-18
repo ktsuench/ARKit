@@ -581,6 +581,59 @@ namespace ARKit
 
       return false;
     }
+
+    // referred to answer from user Gqqnbig on Stack Overflow
+    // https://stackoverflow.com/questions/7446126/opencv-2d-line-intersection-helper-function/7448287
+    public bool GetCenterPoint(out UnityEngine.Vector3 centerVector)
+    {
+      System.Drawing.PointF center = new System.Drawing.PointF(0, 0);
+      bool foundCenter = false;
+
+      if (this._borderPoints.Size > 0)
+      {
+        /*System.Drawing.PointF x = new System.Drawing.PointF(
+          this._borderPoints[1].X - this._borderPoints[0].X,
+          this._borderPoints[1].Y - this._borderPoints[0].Y
+        );
+        System.Drawing.PointF d1 = new System.Drawing.PointF(
+          this._borderPoints[3].X - this._borderPoints[0].X,
+          this._borderPoints[3].Y - this._borderPoints[0].Y
+        );
+        System.Drawing.PointF d2 = new System.Drawing.PointF(
+         this._borderPoints[2].X - this._borderPoints[1].X,
+         this._borderPoints[2].Y - this._borderPoints[1].Y
+       );
+
+        float cross = d1.X * d2.Y - d1.Y * d2.X;
+        if (Math.Abs(cross) >= 1e-8)
+        {
+          double t1 = (x.X * d2.Y - x.Y * d2.X) / cross;
+          center.X = (float) (this._borderPoints[0].X + d1.X * t1);
+          center.Y = (float) (this._borderPoints[0].Y + d1.Y * t1);
+
+          foundCenter = true;
+        }*/
+
+        float a1 = (this._borderPoints[3].Y - this._borderPoints[0].Y)
+          / (this._borderPoints[3].X - this._borderPoints[0].X);
+        float b1 = (this._borderPoints[0].Y - a1 * this._borderPoints[0].X);
+        float a2 = (this._borderPoints[2].Y - this._borderPoints[1].Y)
+          / (this._borderPoints[2].X - this._borderPoints[1].X);
+        float b2 = (this._borderPoints[1].Y - a2 * this._borderPoints[1].X);
+
+        if (Math.Abs(a2 - a1) > 1e-8)
+        {
+          center.X = (b1 - b2) / (a2 - a1);
+          center.Y = a1 * center.X + b1;
+
+          foundCenter = true;
+        }
+      }
+
+      centerVector = new UnityEngine.Vector3(center.X, 0, center.Y);
+
+      return foundCenter;
+    }
   }
 
   public class CameraProperties
