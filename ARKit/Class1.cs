@@ -652,6 +652,51 @@ namespace ARKit
 
       return midpoint;
     }
+
+    public bool DrawOrientationAxis(Mat srcFrame, out Mat dstFrame)
+    {
+      System.Drawing.PointF x, y;
+      Mat a, b, c;
+
+      dstFrame = srcFrame.Clone();
+
+      if (this.GetCenterPoint(out UnityEngine.Vector3 centerVector))
+      {
+        x = this.FindMidpoint(this._borderPoints[0], this._borderPoints[1]);
+        y = this.FindMidpoint(this._borderPoints[0], this._borderPoints[2]);
+        a = new Mat(new System.Drawing.Size(1, 3), DepthType.Cv32F, 3);
+        b = new Mat(new System.Drawing.Size(1, 3), DepthType.Cv32F, 3);
+
+        a.SetValue(0, 0, x.X);
+        a.SetValue(1, 0, x.Y);
+        a.SetValue(2, 0, 1);
+        b.SetValue(0, 0, y.X);
+        b.SetValue(1, 0, y.Y);
+        b.SetValue(2, 0, 1);
+
+        c = a.Cross(b);
+
+        CvInvoke.Line(dstFrame,
+          new System.Drawing.Point((int)centerVector.x, (int)centerVector.z),
+          new System.Drawing.Point((int)x.X, (int)x.Y),
+          new Rgb(0, 0, 255).MCvScalar, 10);
+        CvInvoke.Line(dstFrame,
+          new System.Drawing.Point((int)centerVector.x, (int)centerVector.z),
+          new System.Drawing.Point((int)y.X, (int)y.Y),
+          new Rgb(255, 0, 0).MCvScalar, 10);
+        CvInvoke.Line(dstFrame,
+          new System.Drawing.Point((int)centerVector.x, (int)centerVector.z),
+          new System.Drawing.Point(
+            (int)(c.GetValue(0, 0) / c.GetValue(2, 0)),
+            (int)(c.GetValue(1, 0) / c.GetValue(2, 0))
+          ),
+          new Rgb(0, 255, 0).MCvScalar, 10);
+
+        return true;
+      }
+
+      return false;
+    }
   }
 
   public class CameraProperties
