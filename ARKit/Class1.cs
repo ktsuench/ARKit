@@ -329,34 +329,35 @@ namespace ARKit
       homographyMat = new Matrix<double>(this._homographyMat.Rows, this._homographyMat.Cols);
       this._homographyMat.CopyTo(homographyMat);
 
-      /*
-       * check that the matches fit the homography model
-       * by transforming the key points of the item and
-       * comparing with the detected key points in the image
-       * of where the item should be
-       */
-      for (int i = 0; i < trainCoords.Size; i++)
-      {
-        Mat col = Mat.Ones(3, 1, DepthType.Cv64F, 3);
-        Matrix<double> colm = new Matrix<double>(col.Rows, col.Cols);
-        col.SetValue(0, 0, trainCoords[i].X);
-        col.SetValue(1, 0, trainCoords[i].Y);
+      if (!this._homographyMat.Size.IsEmpty)
+        /*
+         * check that the matches fit the homography model
+         * by transforming the key points of the item and
+         * comparing with the detected key points in the image
+         * of where the item should be
+         */
+        for (int i = 0; i < trainCoords.Size; i++)
+        {
+          Mat col = Mat.Ones(3, 1, DepthType.Cv64F, 3);
+          Matrix<double> colm = new Matrix<double>(col.Rows, col.Cols);
+          col.SetValue(0, 0, trainCoords[i].X);
+          col.SetValue(1, 0, trainCoords[i].Y);
 
-        col.CopyTo(colm);
-        colm = homographyMat * colm;
-        colm /= colm[2, 0];
+          col.CopyTo(colm);
+          colm = homographyMat * colm;
+          colm /= colm[2, 0];
 
-        double dist = Math.Sqrt(
-          Math.Pow(colm[0, 0] - queryCoords[i].X, 2) +
-          Math.Pow(colm[1, 0] - queryCoords[i].Y, 2));
+          double dist = Math.Sqrt(
+            Math.Pow(colm[0, 0] - queryCoords[i].X, 2) +
+            Math.Pow(colm[1, 0] - queryCoords[i].Y, 2));
 
-        if (dist < INLIER_THRESHOLD)
-          /*{
-            inliers1.Push(new System.Drawing.PointF[] { trainCoords[i] });
-            inliers2.Push(new System.Drawing.PointF[] { queryCoords[i] });
-          }*/
-          inliers++;
-      }
+          if (dist < INLIER_THRESHOLD)
+            /*{
+              inliers1.Push(new System.Drawing.PointF[] { trainCoords[i] });
+              inliers2.Push(new System.Drawing.PointF[] { queryCoords[i] });
+            }*/
+            inliers++;
+        }
 
       return inliers;
     }
