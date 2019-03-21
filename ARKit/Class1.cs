@@ -181,7 +181,7 @@ namespace ARKit
     private const float INLIER_USABLE_THRESHOLD = 0.6f;
     private const int KTH_NEAREST_NEIGHBOUR = 2;
     private const int MAX_PYRAMID_LEVELS = 3; // default used in OpenCV
-    private const int MATCHES_REQUIRED = 50;
+    private const int MATCHES_REQUIRED = 10;
     private const float NN_MATCH_RATIO = 0.8f;
     // either finish by 30 iterations or search window moved less than epsilon of 0.01
     private readonly MCvTermCriteria TERMINATION_CRITERIA =
@@ -442,7 +442,7 @@ namespace ARKit
         }
       }
     }
-    
+
     public bool FindObject()
     {
       if (this._inlierRatio > INLIER_USABLE_THRESHOLD && this._previousBorderPoints.Size > 0)
