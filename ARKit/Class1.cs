@@ -183,6 +183,7 @@ namespace ARKit
     private const int MAX_PYRAMID_LEVELS = 3; // default used in OpenCV
     private const int MATCHES_REQUIRED = 10;
     private const float NN_MATCH_RATIO = 0.8f;
+    private const float RANSAC_REPROJECTION_THRESHOLD = 3f; // default
     // either finish by 30 iterations or search window moved less than epsilon of 0.01
     private readonly MCvTermCriteria TERMINATION_CRITERIA =
       new MCvTermCriteria(30, 0.01); // default used in OpenCV
@@ -195,7 +196,9 @@ namespace ARKit
     private readonly System.Drawing.Size _size;
     private readonly VectorOfKeyPoint _keypoints;
     private readonly Mat _descriptors;
-    private Mat _homographyMat;
+    private Mat _homographyCameraMat;
+    private Mat _homographyMatchMat;
+    private Mat _homographyTrackMat;
     private int _matches;
     private int _inliers;
     private double _inlierRatio;
@@ -210,7 +213,7 @@ namespace ARKit
     private FeatureState _state;
 
     public FeaturePoints(System.Drawing.Size size, VectorOfKeyPoint keypoints,
-      Mat descriptors, bool unity = true)
+      Mat descriptors, Mat homography, bool unity = true)
     {
       this._unity = unity;
       this._size = size;
@@ -222,7 +225,9 @@ namespace ARKit
       });
       this._keypoints = keypoints;
       this._descriptors = descriptors;
-      this._homographyMat = new Mat();
+      this._homographyCameraMat = homography ?? new Mat();
+      this._homographyMatchMat = new Mat();
+      this._homographyTrackMat = new Mat();
       this._matches = 0;
       this._inliers = 0;
       this._inlierRatio = 0;
@@ -240,7 +245,7 @@ namespace ARKit
     public System.Drawing.Size Size { get => this._size; }
     public VectorOfKeyPoint KeyPoints { get => this._keypoints; }
     public Mat Descriptors { get => this._descriptors; }
-    public Mat HomographyMatrix { get => this._homographyMat; }
+    public Mat CameraHomography { set => this._homographyCameraMat = value; }
     public int Matches { get => this._matches; }
     public int Inliers { get => this._inliers; }
     public double InlierRatio { get => this._inlierRatio; }
@@ -281,7 +286,7 @@ namespace ARKit
       }
     }
 
-    public static FeaturePoints ReadData(string filepath, bool unity = true)
+    public static FeaturePoints ReadData(string filepath, Mat homography = null, bool unity = true)
     {
       System.Drawing.Size size = new System.Drawing.Size();
       Mat descriptors = new Mat();
@@ -313,10 +318,46 @@ namespace ARKit
       }
 
       return new FeaturePoints(
-        size, new VectorOfKeyPoint(keypoints.ToArray()), descriptors, unity);
+        size, new VectorOfKeyPoint(keypoints.ToArray()), descriptors, homography, unity);
     }
 
-    private int CheckHomography(VectorOfPointF trainCoords, VectorOfPointF queryCoords)
+    public bool GetHomography(out Mat homography)
+    {
+      Matrix<double> Hc, Hm, Ht;
+
+      homography = null;
+
+      if (this._homographyCameraMat.IsEmpty || this._homographyMatchMat.IsEmpty)
+        return false;
+      else
+      {
+        Hc = new Matrix<double>(
+          this._homographyCameraMat.Rows, this._homographyCameraMat.Cols);
+        Hm = new Matrix<double>(
+          this._homographyMatchMat.Rows, this._homographyMatchMat.Cols);
+
+        this._homographyCameraMat.CopyTo(Hc);
+        this._homographyMatchMat.CopyTo(Hm);
+
+        homography = new Mat();
+
+        if (this._homographyTrackMat.IsEmpty)
+          (Hc * Hm).Mat.ConvertTo(homography, DepthType.Cv32F);
+        else
+        {
+          Ht = new Matrix<double>(
+            this._homographyTrackMat.Rows, this._homographyTrackMat.Cols);
+
+          this._homographyTrackMat.CopyTo(Ht);
+
+          (Hc * Hm * Ht).Mat.ConvertTo(homography, DepthType.Cv32F);
+        }
+
+        return true;
+      }
+    }
+
+    private int CheckHomography(VectorOfPointF trainCoords, VectorOfPointF queryCoords, out Mat homography)
     {
       // VectorOfPointF inliers1 = new VectorOfPointF();
       // VectorOfPointF inliers2 = new VectorOfPointF();
@@ -324,12 +365,12 @@ namespace ARKit
       int inliers = 0;
 
       // determine homography matrix
-      this._homographyMat = CvInvoke.FindHomography(trainCoords, queryCoords,
-        HomographyMethod.Ransac, INLIER_THRESHOLD);
-      homographyMat = new Matrix<double>(this._homographyMat.Rows, this._homographyMat.Cols);
-      this._homographyMat.CopyTo(homographyMat);
+      homography = CvInvoke.FindHomography(trainCoords, queryCoords,
+        HomographyMethod.Ransac, RANSAC_REPROJECTION_THRESHOLD);
+      homographyMat = new Matrix<double>(homography.Rows, homography.Cols);
+      homography.CopyTo(homographyMat);
 
-      if (!this._homographyMat.Size.IsEmpty)
+      if (!homography.Size.IsEmpty)
         /*
          * check that the matches fit the homography model
          * by transforming the key points of the item and
@@ -417,11 +458,13 @@ namespace ARKit
         // only generate homography matrix if more than 50 matches found
         if (itemCoords.Size > MATCHES_REQUIRED)
         {
-          inliers = CheckHomography(itemCoords, imageCoords);
+          inliers = CheckHomography(itemCoords, imageCoords, out Mat homography);
           inlierRatio = inliers * 1.0 / itemCoords.Size;
 
           if (inlierRatio > INLIER_USABLE_THRESHOLD)
           {
+            this._homographyMatchMat.Dispose();
+            this._homographyMatchMat = homography;
             this._inliers = inliers;
             this._matches = itemCoords.Size;
             this._inlierRatio = inlierRatio;
@@ -435,6 +478,8 @@ namespace ARKit
         }
         else
         {
+          this._homographyMatchMat.Dispose();
+          this._homographyMatchMat = new Mat();
           this._matches = 0;
           this._inliers = 0;
           this._inlierRatio = 0;
@@ -444,14 +489,15 @@ namespace ARKit
       }
     }
 
-    public bool FindObject()
+    public bool FindObject(bool matching = true)
     {
       if (this._inlierRatio > INLIER_USABLE_THRESHOLD && this._previousBorderPoints.Size > 0)
       {
         this._borderPoints.Clear();
 
         // transform item points to image points
-        CvInvoke.PerspectiveTransform(this._previousBorderPoints, this._borderPoints, this._homographyMat);
+        CvInvoke.PerspectiveTransform(this._previousBorderPoints, this._borderPoints,
+          matching ? this._homographyMatchMat : this._homographyTrackMat);
 
         if (this._replacePreviousBorderPoints)
         {
@@ -466,7 +512,7 @@ namespace ARKit
       return false;
     }
 
-    public void TrackObject()
+    public bool TrackObject()
     {
       Mat previousFrame = this._previousFrame.Clone();
       Mat currentFrame = Memory.Frame.Clone();
@@ -498,17 +544,38 @@ namespace ARKit
         this._trackerAvgErr /= this._trackerErr.Length;
 
         if (this._trackerAvgErr > ACCEPTABLE_TRACKING_AVERAGE_ERROR)
+        {
+          this._homographyTrackMat.Dispose();
+          this._homographyTrackMat = new Mat();
           this.ComputeAndMatch();
-
+        }
         else
         {
-          inliers = CheckHomography(this._previousPoints, new VectorOfPointF(imagePoints));
+          inliers = CheckHomography(this._previousPoints, new VectorOfPointF(imagePoints), out Mat homography);
 
           if (inliers <= MATCHES_REQUIRED)
+          {
+            this._homographyTrackMat.Dispose();
+            this._homographyTrackMat = new Mat();
             this.ComputeAndMatch();
+          }
+          else
+          {
+            this._homographyTrackMat.Dispose();
+            this._homographyTrackMat = homography;
+
+            return true;
+          }
         }
       }
-      else this.ComputeAndMatch();
+      else
+      {
+        this._homographyTrackMat.Dispose();
+        this._homographyTrackMat = new Mat();
+        this.ComputeAndMatch();
+      }
+
+      return false;
     }
 
     public Frame DrawObjectBorder(bool drawCenter = false)
@@ -556,33 +623,36 @@ namespace ARKit
     {
       projectionMatrix = new UnityEngine.Matrix4x4();
 
-      try
+      if (this.GetHomography(out Mat homography))
       {
-        if (this._homographyMat.Size.Height > 0 && this._homographyMat.Size.Width > 0)
+        try
         {
-          projectionMatrix.m00 = (float)this._homographyMat.GetValue(0, 0);
-          projectionMatrix.m01 = (float)this._homographyMat.GetValue(0, 1);
-          projectionMatrix.m02 = 0;
-          projectionMatrix.m03 = (float)this._homographyMat.GetValue(0, 2);
-          projectionMatrix.m10 = (float)this._homographyMat.GetValue(1, 0);
-          projectionMatrix.m11 = (float)this._homographyMat.GetValue(1, 1);
-          projectionMatrix.m12 = 0;
-          projectionMatrix.m13 = (float)this._homographyMat.GetValue(1, 2);
-          projectionMatrix.m20 = 0;
-          projectionMatrix.m21 = 0;
-          projectionMatrix.m22 = 1;
-          projectionMatrix.m23 = 0;
-          projectionMatrix.m30 = (float)this._homographyMat.GetValue(2, 0);
-          projectionMatrix.m31 = (float)this._homographyMat.GetValue(2, 1);
-          projectionMatrix.m32 = 0;
-          projectionMatrix.m33 = (float)this._homographyMat.GetValue(2, 2);
+          if (homography.Size.Height > 0 && homography.Size.Width > 0)
+          {
+            projectionMatrix.m00 = (float)homography.GetValue(0, 0);
+            projectionMatrix.m01 = (float)homography.GetValue(0, 1);
+            projectionMatrix.m02 = 0;
+            projectionMatrix.m03 = (float)homography.GetValue(0, 2);
+            projectionMatrix.m10 = (float)homography.GetValue(1, 0);
+            projectionMatrix.m11 = (float)homography.GetValue(1, 1);
+            projectionMatrix.m12 = 0;
+            projectionMatrix.m13 = (float)homography.GetValue(1, 2);
+            projectionMatrix.m20 = 0;
+            projectionMatrix.m21 = 0;
+            projectionMatrix.m22 = 1;
+            projectionMatrix.m23 = 0;
+            projectionMatrix.m30 = (float)homography.GetValue(2, 0);
+            projectionMatrix.m31 = (float)homography.GetValue(2, 1);
+            projectionMatrix.m32 = 0;
+            projectionMatrix.m33 = (float)homography.GetValue(2, 2);
 
-          return true;
+            return true;
+          }
         }
-      }
-      catch (Exception ex)
-      {
-        // do nothing
+        catch (Exception ex)
+        {
+          // do nothing
+        }
       }
 
       return false;
@@ -675,28 +745,28 @@ namespace ARKit
 
         a.SetValue(0, 0, x.X);
         a.SetValue(1, 0, x.Y);
-        a.SetValue(2, 0, 1);
+        a.SetValue(2, 0, 0);
         b.SetValue(0, 0, y.X);
         b.SetValue(1, 0, y.Y);
-        b.SetValue(2, 0, 1);
+        b.SetValue(2, 0, 0);
 
         c = a.Cross(b);
 
         CvInvoke.Line(dstFrame,
           new System.Drawing.Point((int)centerVector.x, (int)centerVector.z),
           new System.Drawing.Point((int)x.X, (int)x.Y),
-          new Rgb(0, 0, 255).MCvScalar, 10);
+          new Rgb(0, 0, 255).MCvScalar, 10); // red - x (x in unity)
         CvInvoke.Line(dstFrame,
           new System.Drawing.Point((int)centerVector.x, (int)centerVector.z),
           new System.Drawing.Point((int)y.X, (int)y.Y),
-          new Rgb(255, 0, 0).MCvScalar, 10);
+          new Rgb(255, 0, 0).MCvScalar, 10); // blue - y (z in unity)
         CvInvoke.Line(dstFrame,
           new System.Drawing.Point((int)centerVector.x, (int)centerVector.z),
           new System.Drawing.Point(
             (int)(c.GetValue(0, 0) / c.GetValue(2, 0)),
             (int)(c.GetValue(1, 0) / c.GetValue(2, 0))
           ),
-          new Rgb(0, 255, 0).MCvScalar, 10);
+          new Rgb(0, 255, 0).MCvScalar, 10); // green - z (y in unity)
 
         return true;
       }
@@ -705,19 +775,23 @@ namespace ARKit
     }
   }
 
-  public class CameraProperties
+  public class InitialFrame
   {
-    private readonly MCvTermCriteria _termCritera = new MCvTermCriteria(30, double.Epsilon);
+    private readonly MCvTermCriteria TERMINATION_CRITERIA
+      = new MCvTermCriteria(30, double.Epsilon);
+    private const float RANSAC_REPROJECTION_THRESHOLD = 3f; // default
+
     private readonly Camera _cap;
     private readonly System.Drawing.Size _patternSize;
     private readonly float _squareSize;
     private bool _calibrated;
     private Mat _cameraMat, _distCoeffs;
-    // private VectorOfMat _rotationVectors, _translationVectors;
+    private VectorOfMat _rotationVectors, _translationVectors;
     // private VectorOfVectorOfPointF _imageCoords;
+    private Mat _homography;
     private double _err;
 
-    public CameraProperties(Camera cap, Size patternSize, float squareSize)
+    public InitialFrame(Camera cap, Size patternSize, float squareSize)
     {
       this._cap = cap;
       this._patternSize = patternSize != null ? patternSize.Dims : new System.Drawing.Size(0, 0);
@@ -725,18 +799,20 @@ namespace ARKit
       this._calibrated = false;
       this._cameraMat = Mat.Eye(3, 3, DepthType.Cv32F, 1);
       this._distCoeffs = Mat.Zeros(5, 1, DepthType.Cv64F, 1);
-      // this._rotationVectors = new VectorOfMat();
-      // this._translationVectors = new VectorOfMat();
+      this._rotationVectors = new VectorOfMat();
+      this._translationVectors = new VectorOfMat();
+      this._homography = Mat.Zeros(3, 3, DepthType.Cv32F, 1);
       // this._imageCoords = new VectorOfVectorOfPointF();
     }
 
-    public CameraProperties() : this(null, null, -1) { }
+    public InitialFrame() : this(null, null, -1) { }
 
     // TODO convert to non-opencv data types
     public Mat CameraMatrix { get => this._cameraMat; }
     public Mat DistortionCoefficients { get => this._distCoeffs; }
-    // public VectorOfMat RotationVectors { get => this._rotationVectors; }
-    // public VectorOfMat TranslationVectors { get => this._translationVectors; }
+    public VectorOfMat RotationVectors { get => this._rotationVectors; }
+    public VectorOfMat TranslationVectors { get => this._translationVectors; }
+    public Mat Homography { get => this._homography; }
     public bool IsCalibrated { get => this._calibrated; }
     public double Error { get => this._err; }
 
@@ -777,28 +853,27 @@ namespace ARKit
         }
       }
 
-      /*
       this._err = CvInvoke.CalibrateCamera(objectCoords.ToArrayOfArray(),
-        this._imageCoords.ToArrayOfArray(), Memory.Frame.Size, this._cameraMat,
-        this._distCoeffs, CalibType.Default, _termCritera, out rvec, out tvec);
+        imageCoords.ToArrayOfArray(), Memory.Frame.Size, this._cameraMat,
+        this._distCoeffs, CalibType.Default, TERMINATION_CRITERIA, out Mat[] rvec, out Mat[] tvec);
 
       this._rotationVectors.Push(rvec);
       this._translationVectors.Push(tvec);
 
+      this._homography = CvInvoke.FindHomography(objectCoords[0], imageCoords[0],
+        HomographyMethod.Ransac, RANSAC_REPROJECTION_THRESHOLD);
+
+      /*
       this.SaveToFile(err, this._cameraMat, this._distCoeffs, this._rotationVectors,
-        this._translationVectors, objectCoord, this._imageCoords);
+      this._translationVectors, objectCoord, this._imageCoords);
       */
 
-      this._err = CvInvoke.CalibrateCamera(objectCoords.ToArrayOfArray(),
-        imageCoords.ToArrayOfArray(), Memory.Frame.Size, this._cameraMat,
-        this._distCoeffs, CalibType.Default, _termCritera, out Mat[] rvec, out Mat[] tvec);
-
-      this.SaveToFile(this._err, this._cameraMat, this._distCoeffs);
+      this.SaveToFile(this._err, this._cameraMat, this._homography, this._distCoeffs);
 
       this._calibrated = true;
     }
 
-    public void SaveToFile(double err, Mat camMat, Mat distCoeffs)
+    public void SaveToFile(double err, Mat camMat, Mat homographyMat, Mat distCoeffs)
     /*public void SaveToFile(double err, Mat camMat, Mat distCoeffs, VectorOfMat rvec,
       VectorOfMat tvec, VectorOfPoint3D32F objCoords, VectorOfVectorOfPointF imageCoords)*/
     {
@@ -807,6 +882,7 @@ namespace ARKit
       {
         fs.Write(err, "error");
         fs.Write(camMat, "cameraMatrix");
+        fs.Write(homographyMat, "homographyMatrix");
         fs.Write(distCoeffs, "distortionCoefficients");
         /*
          * TODO may need to store these for use in future
@@ -828,6 +904,7 @@ namespace ARKit
       {
         this._err = fs.GetNode("error").ReadDouble();
         fs.GetNode("cameraMatrix").ReadMat(this._cameraMat);
+        fs.GetNode("homographyMatrix").ReadMat(this._homography);
         fs.GetNode("distortionCoefficients").ReadMat(this._distCoeffs);
         fs.ReleaseAndGetString();
       }
@@ -963,7 +1040,7 @@ namespace ARKit
       String win1 = "Camera Calibration Demo";
       CvInvoke.NamedWindow(win1);
 
-      CameraProperties cc = new CameraProperties(capture, patternSize, squareSize);
+      InitialFrame cc = new InitialFrame(capture, patternSize, squareSize);
       cc.Start();
 
       for (; ; )
@@ -989,7 +1066,7 @@ namespace ARKit
 
     public static void ReadIntrinsicsFile()
     {
-      CameraProperties cc = new CameraProperties();
+      InitialFrame cc = new InitialFrame();
       cc.ReadFromFile();
       System.Diagnostics.Debug.WriteLine(cc.IsCalibrated);
       System.Diagnostics.Debug.WriteLine(cc.Error);
@@ -1009,7 +1086,7 @@ namespace ARKit
 
     public static void ReadFeaturePoints(string keypointsFilePath)
     {
-      FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath, false);
+      FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath, unity: false);
       MKeyPoint kp = fp.KeyPoints.ToArray()[0];
 
       System.Diagnostics.Debug.WriteLine(kp.Angle);
@@ -1025,7 +1102,7 @@ namespace ARKit
     public static void MatchFeatures(string imageFilePath, string keypointsFilePath, Size size)
     {
       FeaturePoints.ComputeAndSave(imageFilePath, keypointsFilePath);
-      FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath, false);
+      FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath, unity: false);
 
       Camera capture = new Camera(0, size, false);
       Frame frame;
@@ -1060,10 +1137,11 @@ namespace ARKit
     public static void TrackFeatures(string imageFilePath, string keypointsFilePath, Size size)
     {
       FeaturePoints.ComputeAndSave(imageFilePath, keypointsFilePath);
-      FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath, false);
+      FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath, unity: false);
       int ntracks = 0, nmatches = 0;
+      bool tracked = false;
 
-      Camera capture = new Camera(0, size, false);
+      Camera capture = new Camera(1, size, false);
       Frame frame;
       Image<Bgr, byte> img;
 
@@ -1077,10 +1155,10 @@ namespace ARKit
         if (i == 0)
           fp.ComputeAndMatch();
         else
-          fp.TrackObject();
+          tracked = fp.TrackObject();
 
-        fp.FindObject();
-        frame = fp.DrawObjectBorder();
+        fp.FindObject(!tracked);
+        frame = fp.DrawObjectBorder(true);
         img = new Image<Bgr, byte>(frame.Width, frame.Height)
         {
           Bytes = frame.Image
@@ -1090,6 +1168,7 @@ namespace ARKit
         {
           nmatches++;
           System.Diagnostics.Debug.Write("Detecting, Describing, and Matching");
+          System.Diagnostics.Debug.Write("\t\tPoints " + fp.KeyPoints.Size);
           System.Diagnostics.Debug.Write("\t\tMatches " + fp.Matches);
           System.Diagnostics.Debug.Write("\t\tInliers " + fp.Inliers);
           System.Diagnostics.Debug.WriteLine("\t\tInlier Ratio " + fp.InlierRatio);
@@ -1103,6 +1182,10 @@ namespace ARKit
         else
         {
           System.Diagnostics.Debug.WriteLine("Nothing happening...");
+          System.Diagnostics.Debug.Write("\t\tPoints " + fp.KeyPoints.Size);
+          System.Diagnostics.Debug.Write("\t\tMatches " + fp.Matches);
+          System.Diagnostics.Debug.Write("\t\tInliers " + fp.Inliers);
+          System.Diagnostics.Debug.WriteLine("\t\tInlier Ratio " + fp.InlierRatio);
         }
 
         CvInvoke.Flip(img, img, FlipType.Vertical);
