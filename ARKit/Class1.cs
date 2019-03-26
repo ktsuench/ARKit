@@ -74,18 +74,6 @@ namespace ARKit
     public static Mat Frame { get; set; }
   }
 
-  public class Size
-  {
-    private System.Drawing.Size _size;
-
-    public Size(int height, int width)
-    {
-      this._size = new System.Drawing.Size(height, width);
-    }
-
-    public System.Drawing.Size Dims => this._size;
-  }
-
   public class Frame
   {
     private readonly int _height, _width;
@@ -101,6 +89,18 @@ namespace ARKit
     public int Height { get => this._height; }
     public int Width { get => this._width; }
     public byte[] Image { get => this._image; }
+  }
+
+  public class Size
+  {
+    private System.Drawing.Size _size;
+
+    public Size(int height, int width)
+    {
+      this._size = new System.Drawing.Size(height, width);
+    }
+
+    public System.Drawing.Size Dims => this._size;
   }
 
   // based on 2nd answer https://answers.unity.com/questions/52368/emgucv-inside-unity.html
@@ -176,79 +176,84 @@ namespace ARKit
 
   public class FeaturePoints
   {
-    private readonly VectorOfPointF BORDER;
-    private const float INLIER_THRESHOLD = 2.5f;
-    private const float INLIER_USABLE_THRESHOLD = 0.6f;
-    private const int KTH_NEAREST_NEIGHBOUR = 2;
-    private const int MAX_PYRAMID_LEVELS = 3; // default used in OpenCV
-    private const int MATCHES_REQUIRED = 10;
-    private const float NN_MATCH_RATIO = 0.8f;
-    private const float RANSAC_REPROJECTION_THRESHOLD = 3f; // default
+    private static readonly float ACCEPTABLE_TRACKING_AVERAGE_ERROR = 20.0f;
+    private static readonly float INLIER_THRESHOLD = 2.5f;
+    private static readonly float INLIER_USABLE_THRESHOLD = 0.6f;
+    private static readonly int KTH_NEAREST_NEIGHBOUR = 2;
+    private static readonly int MAX_PYRAMID_LEVELS = 3; // default used in OpenCV
+    private static readonly int MATCHES_REQUIRED = 10;
+    private static readonly float NN_MATCH_RATIO = 0.8f;
+    private static readonly float RANSAC_REPROJECTION_THRESHOLD = 3f; // default
     // either finish by 30 iterations or search window moved less than epsilon of 0.01
-    private readonly MCvTermCriteria TERMINATION_CRITERIA =
-      new MCvTermCriteria(30, 0.01); // default used in OpenCV
-    private readonly System.Drawing.Size SEARCH_WINDOW_SIZE =
+    private static readonly System.Drawing.Size SEARCH_WINDOW_SIZE =
       new System.Drawing.Size(21, 21); // default used in OpenCV
-    private const float ACCEPTABLE_TRACKING_AVERAGE_ERROR = 20.0f;
+    private static readonly MCvTermCriteria TERMINATION_CRITERIA =
+      new MCvTermCriteria(30, 0.01); // default used in OpenCV
+
     public enum FeatureState { MATCHING, TRACKING };
 
-    private readonly bool _unity;
-    private readonly System.Drawing.Size _size;
-    private readonly VectorOfKeyPoint _keypoints;
-    private readonly Mat _descriptors;
+    private readonly VectorOfPointF BORDER;
+
+    private readonly Mat _DESCRIPTORS;
+    private readonly VectorOfKeyPoint _KEYPOINTS;
+    private readonly System.Drawing.Size _SIZE;
+    private readonly bool _UNITY;
+
+    private VectorOfPointF _borderPoints;
     private Mat _homographyCameraMat;
     private Mat _homographyMatchMat;
     private Mat _homographyTrackMat;
-    private int _matches;
     private int _inliers;
     private double _inlierRatio;
-    private VectorOfPointF _borderPoints;
+    private int _matches;
+    private VectorOfPointF _previousBorderPoints;
     private Mat _previousFrame;
     private VectorOfPointF _previousPoints;
-    private VectorOfPointF _previousBorderPoints;
     private bool _replacePreviousBorderPoints;
-    private byte[] _trackerStatus;
-    private Single[] _trackerErr;
-    private float _trackerAvgErr;
     private FeatureState _state;
+    private float _trackerAvgErr;
+    private Single[] _trackerErr;
+    private byte[] _trackerStatus;
 
     public FeaturePoints(System.Drawing.Size size, VectorOfKeyPoint keypoints,
       Mat descriptors, Mat homography, bool unity = true)
     {
-      this._unity = unity;
-      this._size = size;
+      this._DESCRIPTORS = descriptors;
+      this._KEYPOINTS = keypoints;
+      this._SIZE = size;
+      this._UNITY = unity;
+
       BORDER = new VectorOfPointF(new System.Drawing.PointF[] {
         new System.Drawing.PointF(0, 0),
-        new System.Drawing.PointF(this._size.Width, 0),
-        new System.Drawing.PointF(0, this._size.Height),
-        new System.Drawing.PointF(this._size.Width, this._size.Height),
+        new System.Drawing.PointF(this._SIZE.Width, 0),
+        new System.Drawing.PointF(0, this._SIZE.Height),
+        new System.Drawing.PointF(this._SIZE.Width, this._SIZE.Height),
       });
-      this._keypoints = keypoints;
-      this._descriptors = descriptors;
+
+      this._borderPoints = new VectorOfPointF();
       this._homographyCameraMat = homography ?? new Mat();
       this._homographyMatchMat = new Mat();
       this._homographyTrackMat = new Mat();
-      this._matches = 0;
       this._inliers = 0;
       this._inlierRatio = 0;
-      this._borderPoints = new VectorOfPointF();
+      this._matches = 0;
+      this._previousBorderPoints = new VectorOfPointF(BORDER.ToArray());
       this._previousFrame = new Mat();
       this._previousPoints = new VectorOfPointF();
-      this._previousBorderPoints = new VectorOfPointF(BORDER.ToArray());
       this._replacePreviousBorderPoints = false;
+      this._trackerAvgErr = 0;
       this._trackerStatus = new byte[] { };
       this._trackerErr = new float[] { };
-      this._trackerAvgErr = 0;
       this._state = FeatureState.MATCHING;
     }
 
-    public System.Drawing.Size Size { get => this._size; }
-    public VectorOfKeyPoint KeyPoints { get => this._keypoints; }
-    public Mat Descriptors { get => this._descriptors; }
     public Mat CameraHomography { set => this._homographyCameraMat = value; }
-    public int Matches { get => this._matches; }
+    public Mat Descriptors { get => this._DESCRIPTORS; }
     public int Inliers { get => this._inliers; }
     public double InlierRatio { get => this._inlierRatio; }
+    public VectorOfKeyPoint KeyPoints { get => this._KEYPOINTS; }
+    public int Matches { get => this._matches; }
+    public System.Drawing.Size Size { get => this._SIZE; }
     public float TrackerAverageError { get => this._trackerAvgErr; }
     public FeatureState State { get => this._state; }
 
@@ -430,7 +435,7 @@ namespace ARKit
          * finds the k best matches of query descriptors to train descriptors
          * in this case at most 2 train descriptors for each query descriptor
          */
-        matcher.Add(this._descriptors);
+        matcher.Add(this._DESCRIPTORS);
         matcher.KnnMatch(imageDescriptors, nnMatches, KTH_NEAREST_NEIGHBOUR, null);
 
         // find key points which are distinct
@@ -447,7 +452,7 @@ namespace ARKit
           if (dist1 < NN_MATCH_RATIO * dist2)
           {
             itemCoords.Push(new System.Drawing.PointF[] {
-              this._keypoints[first.TrainIdx].Point
+              this._KEYPOINTS[first.TrainIdx].Point
             });
             imageCoords.Push(new System.Drawing.PointF[] {
               imageKeypoints[first.QueryIdx].Point
@@ -612,7 +617,7 @@ namespace ARKit
         System.Drawing.Bitmap currentFrame = nextFrame.ToBitmap();
         MemoryStream m = new MemoryStream();
         System.Drawing.Imaging.ImageFormat format =
-          !this._unity ? System.Drawing.Imaging.ImageFormat.Bmp : currentFrame.RawFormat;
+          !this._UNITY ? System.Drawing.Imaging.ImageFormat.Bmp : currentFrame.RawFormat;
         currentFrame.Save(m, format);
 
         return new Frame(currentFrame.Height, currentFrame.Width, m.ToArray());
@@ -786,7 +791,7 @@ namespace ARKit
     private readonly float _squareSize;
     private bool _calibrated;
     private Mat _cameraMat, _distCoeffs;
-    private VectorOfMat _rotationVectors, _translationVectors;
+    private VectorOfMat _rotationVectors, _translationVector;
     // private VectorOfVectorOfPointF _imageCoords;
     private Mat _homography;
     private double _err;
@@ -800,7 +805,7 @@ namespace ARKit
       this._cameraMat = Mat.Eye(3, 3, DepthType.Cv32F, 1);
       this._distCoeffs = Mat.Zeros(5, 1, DepthType.Cv64F, 1);
       this._rotationVectors = new VectorOfMat();
-      this._translationVectors = new VectorOfMat();
+      this._translationVector = new VectorOfMat();
       this._homography = Mat.Zeros(3, 3, DepthType.Cv32F, 1);
       // this._imageCoords = new VectorOfVectorOfPointF();
     }
@@ -811,7 +816,7 @@ namespace ARKit
     public Mat CameraMatrix { get => this._cameraMat; }
     public Mat DistortionCoefficients { get => this._distCoeffs; }
     public VectorOfMat RotationVectors { get => this._rotationVectors; }
-    public VectorOfMat TranslationVectors { get => this._translationVectors; }
+    public VectorOfMat TranslationVector { get => this._translationVector; }
     public Mat Homography { get => this._homography; }
     public bool IsCalibrated { get => this._calibrated; }
     public double Error { get => this._err; }
@@ -858,14 +863,14 @@ namespace ARKit
         this._distCoeffs, CalibType.Default, TERMINATION_CRITERIA, out Mat[] rvec, out Mat[] tvec);
 
       this._rotationVectors.Push(rvec);
-      this._translationVectors.Push(tvec);
+      this._translationVector.Push(tvec);
 
       this._homography = CvInvoke.FindHomography(objectCoords[0], imageCoords[0],
         HomographyMethod.Ransac, RANSAC_REPROJECTION_THRESHOLD);
 
       /*
       this.SaveToFile(err, this._cameraMat, this._distCoeffs, this._rotationVectors,
-      this._translationVectors, objectCoord, this._imageCoords);
+      this._translationVector, objectCoord, this._imageCoords);
       */
 
       this.SaveToFile(this._err, this._cameraMat, this._homography, this._distCoeffs);
@@ -890,7 +895,7 @@ namespace ARKit
          * and nothing else (VectorOfMat, VectorOfVectorOfPoint3D32F, VectorOfVectorOfPoint...
          */
         // fs.Write(rvec, "rotationVectors");
-        // fs.Write(tvec, "translationVectors");
+        // fs.Write(tvec, "translationVector");
         // fs.Write(objCoords, "objectCoordinates");
         // fs.Write(imageCoords, "imageCoordinates");
         fs.ReleaseAndGetString();
