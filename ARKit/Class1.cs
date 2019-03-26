@@ -588,15 +588,15 @@ namespace ARKit
       return false;
     }
 
-    public Frame DrawObjectBorder(bool drawCenter = false)
+    public Frame DrawObjectBorder(bool drawAxes = false, Mat cameraMat = null, Mat distCoeffs = null, Mat rotationMat = null, Mat translationVector = null)
     {
       Mat frame = Memory.Frame.Clone();
 
       if (this._inlierRatio > INLIER_USABLE_THRESHOLD && this._borderPoints.Size > 0)
       {
-        if (drawCenter)
+        if (drawAxes && cameraMat != null && distCoeffs != null && rotationMat != null && translationVector != null)
         {
-          this.DrawOrientationAxis(Memory.Frame.Clone(), out frame);
+          this.DrawOrientationAxis(cameraMat, distCoeffs, rotationMat, translationVector, Memory.Frame.Clone(), out frame);
         }
 
         CvInvoke.Line(frame,
@@ -736,49 +736,70 @@ namespace ARKit
       return foundPose;
     }
 
-    public bool DrawOrientationAxis(Mat srcFrame, out Mat dstFrame)
+    // refer to https://www.learnopencv.com/rotation-matrix-to-euler-angles/
+    public float[] GetEulerAngles(Mat rotationMat)
     {
-      System.Drawing.PointF x, y;
-      Mat a, b, c;
+      Mat r = new Mat();
+
+      if ((rotationMat.Size.Height == 1 && rotationMat.Size.Width == 3)
+        || (rotationMat.Size.Height == 3 && rotationMat.Size.Width == 1))
+      {
+        CvInvoke.Rodrigues(rotationMat, r);
+      }
+      else
+        rotationMat.ConvertTo(r, DepthType.Cv32F);
+
+      float sqrt = (float)Math.Sqrt(Math.Pow(r.GetValue(0, 0), 2));
+      bool singular = sqrt < 1e-6;
+      float[] eulerAngles = new float[3];
+
+      if (!singular)
+      {
+        eulerAngles[0] = (float)Math.Atan2(r.GetValue(2, 1), r.GetValue(2, 2));
+        eulerAngles[1] = (float)Math.Atan2(-r.GetValue(2, 0), sqrt);
+        eulerAngles[2] = (float)Math.Atan2(r.GetValue(1, 0), r.GetValue(0, 0));
+      }
+      else
+      {
+        eulerAngles[0] = (float)Math.Atan2(-r.GetValue(1, 2), r.GetValue(1, 1));
+        eulerAngles[1] = (float)Math.Atan2(-r.GetValue(2, 0), sqrt);
+        eulerAngles[2] = 0;
+      }
+
+      return eulerAngles;
+    }
+
+    public void DrawOrientationAxis(Mat cameraMat, Mat distCoeffs, Mat rotationMat, Mat translationVector, Mat srcFrame, out Mat dstFrame)
+    {
+      VectorOfPoint3D32F objectCoords = new VectorOfPoint3D32F(new MCvPoint3D32f[]
+      {
+        new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, 1), // center
+        new MCvPoint3D32f(this.BORDER[0].X, this.BORDER[2].Y/2, 1), // x-axis
+        new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[0].Y, 1), // y-axis
+        new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, -150), // z-axis
+        new MCvPoint3D32f(this.BORDER[0].X, this.BORDER[0].Y, 1),
+        new MCvPoint3D32f(this.BORDER[1].X, this.BORDER[1].Y, 1),
+        new MCvPoint3D32f(this.BORDER[2].X, this.BORDER[2].Y, 1),
+        new MCvPoint3D32f(this.BORDER[3].X, this.BORDER[3].Y, 1),
+      });
 
       dstFrame = srcFrame.Clone();
 
-      if (this.GetCenterPoint(out UnityEngine.Vector3 centerVector))
-      {
-        x = this.FindMidpoint(this._borderPoints[0], this._borderPoints[1]);
-        y = this.FindMidpoint(this._borderPoints[0], this._borderPoints[2]);
-        a = new Mat(new System.Drawing.Size(1, 3), DepthType.Cv32F, 3);
-        b = new Mat(new System.Drawing.Size(1, 3), DepthType.Cv32F, 3);
+      System.Drawing.PointF[] imageCoords =
+        CvInvoke.ProjectPoints(objectCoords.ToArray(), rotationMat, translationVector, cameraMat, distCoeffs);
 
-        a.SetValue(0, 0, x.X);
-        a.SetValue(1, 0, x.Y);
-        a.SetValue(2, 0, 0);
-        b.SetValue(0, 0, y.X);
-        b.SetValue(1, 0, y.Y);
-        b.SetValue(2, 0, 0);
-
-        c = a.Cross(b);
-
-        CvInvoke.Line(dstFrame,
-          new System.Drawing.Point((int)centerVector.x, (int)centerVector.z),
-          new System.Drawing.Point((int)x.X, (int)x.Y),
-          new Rgb(0, 0, 255).MCvScalar, 10); // red - x (x in unity)
-        CvInvoke.Line(dstFrame,
-          new System.Drawing.Point((int)centerVector.x, (int)centerVector.z),
-          new System.Drawing.Point((int)y.X, (int)y.Y),
-          new Rgb(255, 0, 0).MCvScalar, 10); // blue - y (z in unity)
-        CvInvoke.Line(dstFrame,
-          new System.Drawing.Point((int)centerVector.x, (int)centerVector.z),
-          new System.Drawing.Point(
-            (int)(c.GetValue(0, 0) / c.GetValue(2, 0)),
-            (int)(c.GetValue(1, 0) / c.GetValue(2, 0))
-          ),
-          new Rgb(0, 255, 0).MCvScalar, 10); // green - z (y in unity)
-
-        return true;
-      }
-
-      return false;
+      CvInvoke.Line(dstFrame,
+        new System.Drawing.Point((int)imageCoords[0].X, (int)imageCoords[0].Y),
+        new System.Drawing.Point((int)imageCoords[1].X, (int)imageCoords[1].Y),
+        new Rgb(0, 0, 255).MCvScalar, 10); // red - x (x in unity)
+      CvInvoke.Line(dstFrame,
+        new System.Drawing.Point((int)imageCoords[0].X, (int)imageCoords[0].Y),
+        new System.Drawing.Point((int)imageCoords[2].X, (int)imageCoords[2].Y),
+        new Rgb(255, 0, 0).MCvScalar, 10); // blue - y (z in unity)
+      CvInvoke.Line(dstFrame,
+        new System.Drawing.Point((int)imageCoords[0].X, (int)imageCoords[0].Y),
+        new System.Drawing.Point((int)imageCoords[3].X, (int)imageCoords[3].Y),
+        new Rgb(0, 255, 0).MCvScalar, 10); // green - z (y in unity)
     }
   }
 
@@ -1143,8 +1164,9 @@ namespace ARKit
 
     public static void TrackFeatures(string imageFilePath, string keypointsFilePath, Size size)
     {
+      InitialFrame ip;
       FeaturePoints.ComputeAndSave(imageFilePath, keypointsFilePath);
-      FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath, unity: false);
+      FeaturePoints fp;
       int ntracks = 0, nmatches = 0;
       bool tracked = false;
 
@@ -1154,6 +1176,19 @@ namespace ARKit
 
       String win1 = "Feature Tracking Demo";
       CvInvoke.NamedWindow(win1, NamedWindowType.Normal);
+
+      if (File.Exists("intrinsics.yml"))
+      {
+        ip = new InitialFrame();
+        ip.ReadFromFile();
+      }
+      else
+      {
+        ip = new InitialFrame(capture, new Size(4, 7), 30);
+        ip.Start();
+      }
+
+      fp = FeaturePoints.ReadData(keypointsFilePath, ip.Homography, false);
 
       for (int i = 0; ; i++)
       {
@@ -1165,7 +1200,16 @@ namespace ARKit
           tracked = fp.TrackObject();
 
         fp.FindObject(!tracked);
-        frame = fp.DrawObjectBorder(true);
+
+        if (fp.GetPose(ip.CameraMatrix, ip.DistortionCoefficients, out Mat rotation, out Mat translation))
+        {
+          frame = fp.DrawObjectBorder(true, ip.CameraMatrix, ip.DistortionCoefficients, rotation, translation);
+          float[] r = fp.GetEulerAngles(rotation);
+          System.Diagnostics.Debug.WriteLine("r" + r[0] + "\t" + r[1] + "\t" + r[2]);
+        }
+        else
+          frame = fp.DrawObjectBorder();
+
         img = new Image<Bgr, byte>(frame.Width, frame.Height)
         {
           Bytes = frame.Image
