@@ -200,7 +200,6 @@ namespace ARKit
     private readonly bool _UNITY;
 
     private VectorOfPointF _borderPoints;
-    private Mat _homographyCameraMat;
     private Mat _homographyMatchMat;
     private Mat _homographyTrackMat;
     private int _inliers;
@@ -219,7 +218,7 @@ namespace ARKit
     private bool _useExtrinsicGuessForPnP = false;
 
     public FeaturePoints(System.Drawing.Size size, VectorOfKeyPoint keypoints,
-      Mat descriptors, Mat homography, bool unity = true)
+      Mat descriptors, bool unity = true)
     {
       this._DESCRIPTORS = descriptors;
       this._KEYPOINTS = keypoints;
@@ -234,7 +233,6 @@ namespace ARKit
       });
 
       this._borderPoints = new VectorOfPointF();
-      this._homographyCameraMat = homography ?? new Mat();
       this._homographyMatchMat = new Mat();
       this._homographyTrackMat = new Mat();
       this._inliers = 0;
@@ -251,8 +249,7 @@ namespace ARKit
       this._translationVector = new Mat();
       this._state = FeatureState.MATCHING;
     }
-
-    public Mat CameraHomography { set => this._homographyCameraMat = value; }
+    
     public Mat Descriptors { get => this._DESCRIPTORS; }
     public int Inliers { get => this._inliers; }
     public double InlierRatio { get => this._inlierRatio; }
@@ -328,31 +325,28 @@ namespace ARKit
       }
 
       return new FeaturePoints(
-        size, new VectorOfKeyPoint(keypoints.ToArray()), descriptors, homography, unity);
+        size, new VectorOfKeyPoint(keypoints.ToArray()), descriptors, unity);
     }
 
     public bool GetHomography(out Mat homography)
     {
-      Matrix<double> Hc, Hm, Ht;
+      Matrix<double> Hm, Ht;
 
       homography = null;
 
-      if (this._homographyCameraMat.IsEmpty || this._homographyMatchMat.IsEmpty)
+      if (this._homographyMatchMat.IsEmpty)
         return false;
       else
       {
-        Hc = new Matrix<double>(
-          this._homographyCameraMat.Rows, this._homographyCameraMat.Cols);
         Hm = new Matrix<double>(
           this._homographyMatchMat.Rows, this._homographyMatchMat.Cols);
-
-        this._homographyCameraMat.CopyTo(Hc);
+        
         this._homographyMatchMat.CopyTo(Hm);
 
         homography = new Mat();
 
         if (this._homographyTrackMat.IsEmpty)
-          (Hc * Hm).Mat.ConvertTo(homography, DepthType.Cv32F);
+          Hm.Mat.ConvertTo(homography, DepthType.Cv32F);
         else
         {
           Ht = new Matrix<double>(
@@ -360,7 +354,7 @@ namespace ARKit
 
           this._homographyTrackMat.CopyTo(Ht);
 
-          (Hc * Hm * Ht).Mat.ConvertTo(homography, DepthType.Cv32F);
+          (Hm * Ht).Mat.ConvertTo(homography, DepthType.Cv32F);
         }
 
         return true;
