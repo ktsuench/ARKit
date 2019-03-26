@@ -730,6 +730,25 @@ namespace ARKit
       return foundPose;
     }
 
+    public bool GetCenter(IInputArray cameraMat, IInputArray distCoeffs, out Mat rotationMat, out Mat translationVector, out float[] center)
+    {
+      center = new float[3];
+
+      if (GetPose(cameraMat, distCoeffs, out rotationMat, out translationVector))
+      {
+        System.Drawing.PointF[] imageCoord = CvInvoke.ProjectPoints(new MCvPoint3D32f[] { new MCvPoint3D32f(this.BORDER[1].X / 2, this.BORDER[2].Y / 2, 1) },
+          rotationMat, translationVector, cameraMat, distCoeffs);
+
+        center[0] = imageCoord[0].X;
+        center[1] = imageCoord[0].Y;
+        center[2] = 1;
+
+        return true;
+      }
+
+      return false;
+    }
+
     // refer to https://www.euclideanspace.com/maths/geometry/rotations/conversions/matrixToEuler/index.htm
     public float[] GetEulerAngles(Mat rotationMat)
     {
