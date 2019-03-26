@@ -730,7 +730,7 @@ namespace ARKit
       return foundPose;
     }
 
-    // refer to https://www.learnopencv.com/rotation-matrix-to-euler-angles/
+    // refer to https://www.euclideanspace.com/maths/geometry/rotations/conversions/matrixToEuler/index.htm
     public float[] GetEulerAngles(Mat rotationMat)
     {
       Mat r = new Mat();
@@ -743,22 +743,32 @@ namespace ARKit
       else
         rotationMat.ConvertTo(r, DepthType.Cv32F);
 
-      float sqrt = (float)Math.Sqrt(Math.Pow(r.GetValue(0, 0), 2));
-      bool singular = sqrt < 1e-6;
       float[] eulerAngles = new float[3];
+      double bank, altitude, heading;
 
-      if (!singular)
-      {
-        eulerAngles[0] = (float)Math.Atan2(r.GetValue(2, 1), r.GetValue(2, 2));
-        eulerAngles[1] = (float)Math.Atan2(-r.GetValue(2, 0), sqrt);
-        eulerAngles[2] = (float)Math.Atan2(r.GetValue(1, 0), r.GetValue(0, 0));
+      // assume that angles are in radians
+      if (r.GetValue(1, 0) > 0.998)
+      { // singularity at north pole
+        bank = 0;
+        altitude = Math.PI / 2;
+        heading = Math.Atan2(r.GetValue(0, 2), r.GetValue(2, 2));
+      }
+      else if (r.GetValue(1, 0) < -0.998)
+      { // singularity at south pole
+        bank = 0;
+        altitude = -Math.PI / 2;
+        heading = Math.Atan2(r.GetValue(0, 2), r.GetValue(2, 2));
       }
       else
       {
-        eulerAngles[0] = (float)Math.Atan2(-r.GetValue(1, 2), r.GetValue(1, 1));
-        eulerAngles[1] = (float)Math.Atan2(-r.GetValue(2, 0), sqrt);
-        eulerAngles[2] = 0;
+        bank = Math.Atan2(-r.GetValue(1, 2), r.GetValue(1, 1));
+        altitude = Math.Asin(r.GetValue(1, 0));
+        heading = Math.Atan2(-r.GetValue(2, 0), r.GetValue(0, 0));
       }
+
+      eulerAngles[0] = (float)bank; // rotation about x
+      eulerAngles[1] = (float)heading; // rotation about y 
+      eulerAngles[2] = (float)altitude; // rotation about z
 
       return eulerAngles;
     }
