@@ -210,10 +210,13 @@ namespace ARKit
     private Mat _previousFrame;
     private VectorOfPointF _previousPoints;
     private bool _replacePreviousBorderPoints;
+    private Mat _rotationMatrix;
     private FeatureState _state;
     private float _trackerAvgErr;
     private Single[] _trackerErr;
     private byte[] _trackerStatus;
+    private Mat _translationVector;
+    private bool _useExtrinsicGuessForPnP = false;
 
     public FeaturePoints(System.Drawing.Size size, VectorOfKeyPoint keypoints,
       Mat descriptors, Mat homography, bool unity = true)
@@ -241,9 +244,11 @@ namespace ARKit
       this._previousFrame = new Mat();
       this._previousPoints = new VectorOfPointF();
       this._replacePreviousBorderPoints = false;
+      this._rotationMatrix = new Mat();
       this._trackerAvgErr = 0;
       this._trackerStatus = new byte[] { };
       this._trackerErr = new float[] { };
+      this._translationVector = new Mat();
       this._state = FeatureState.MATCHING;
     }
 
@@ -663,75 +668,72 @@ namespace ARKit
       return false;
     }
 
-    // referred to answer from user Gqqnbig on Stack Overflow
-    // https://stackoverflow.com/questions/7446126/opencv-2d-line-intersection-helper-function/7448287
-    public bool GetCenterPoint(out UnityEngine.Vector3 centerVector)
+    public bool GetPose(IInputArray cameraMat, IInputArray distCoeffs, out Mat rotationMat, out Mat translationVector)
     {
-      System.Drawing.PointF center = new System.Drawing.PointF(0, 0);
-      bool foundCenter = false;
-
-      if (this._borderPoints.Size > 0)
+      VectorOfPoint3D32F objectCoords = new VectorOfPoint3D32F(new MCvPoint3D32f[]
       {
-        /*System.Drawing.PointF x = new System.Drawing.PointF(
-          this._borderPoints[1].X - this._borderPoints[0].X,
-          this._borderPoints[1].Y - this._borderPoints[0].Y
-        );
-        System.Drawing.PointF d1 = new System.Drawing.PointF(
-          this._borderPoints[3].X - this._borderPoints[0].X,
-          this._borderPoints[3].Y - this._borderPoints[0].Y
-        );
-        System.Drawing.PointF d2 = new System.Drawing.PointF(
-         this._borderPoints[2].X - this._borderPoints[1].X,
-         this._borderPoints[2].Y - this._borderPoints[1].Y
-       );
+        new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, 1), // center
+        // new MCvPoint3D32f(this.BORDER[0].X, this.BORDER[2].Y/2, 1), // x-axis
+        // new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[0].Y, 1), // y-axis
+        // new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, 2), // z-axis
+        new MCvPoint3D32f(this.BORDER[0].X, this.BORDER[0].Y, 1),
+        new MCvPoint3D32f(this.BORDER[1].X, this.BORDER[1].Y, 1),
+        new MCvPoint3D32f(this.BORDER[2].X, this.BORDER[2].Y, 1),
+        new MCvPoint3D32f(this.BORDER[3].X, this.BORDER[3].Y, 1),
+      });
+      VectorOfPointF imageCoords = new VectorOfPointF();
+      Matrix<double> homography = new Matrix<double>(3, 3);
+      Matrix<double> temp;
+      Matrix<double> pointMat = new Matrix<double>(3, 1);
+      bool foundPose = false;
 
-        float cross = d1.X * d2.Y - d1.Y * d2.X;
-        if (Math.Abs(cross) >= 1e-8)
+      // axes = new VectorOfPointF();
+      rotationMat = new Mat();
+      translationVector = new Mat();
+
+      if (!this._homographyMatchMat.IsEmpty)
+      {
+        this._homographyMatchMat.CopyTo(homography);
+
+        if (!this._homographyTrackMat.IsEmpty)
         {
-          double t1 = (x.X * d2.Y - x.Y * d2.X) / cross;
-          center.X = (float) (this._borderPoints[0].X + d1.X * t1);
-          center.Y = (float) (this._borderPoints[0].Y + d1.Y * t1);
-
-          foundCenter = true;
-        }*/
-
-        float a1 = (this._borderPoints[3].Y - this._borderPoints[0].Y)
-          / (this._borderPoints[3].X - this._borderPoints[0].X);
-        float b1 = (this._borderPoints[0].Y - a1 * this._borderPoints[0].X);
-        float a2 = (this._borderPoints[2].Y - this._borderPoints[1].Y)
-          / (this._borderPoints[2].X - this._borderPoints[1].X);
-        float b2 = (this._borderPoints[1].Y - a2 * this._borderPoints[1].X);
-
-        if (Math.Abs(a2 - a1) > 1e-8)
-        {
-          center.X = (b1 - b2) / (a2 - a1);
-          center.Y = a1 * center.X + b1;
-
-          foundCenter = true;
+          temp = new Matrix<double>(3, 3);
+          this._homographyTrackMat.CopyTo(temp);
+          (temp * homography).CopyTo(homography);
         }
+
+        foreach (MCvPoint3D32f point in objectCoords.ToArray())
+        {
+          pointMat[0, 0] = point.X;
+          pointMat[1, 0] = point.Y;
+          pointMat[2, 0] = point.Z;
+
+          (homography * pointMat).Mat.ConvertTo(pointMat, DepthType.Cv64F);
+
+          imageCoords.Push(new System.Drawing.PointF[]
+          {
+            new System.Drawing.PointF((float) (pointMat[0,0]/pointMat[2,0]), (float) (pointMat[1,0]/pointMat[2,0]))
+          });
+        }
+
+        foundPose = CvInvoke.SolvePnP(objectCoords.ToArray(), imageCoords.ToArray(),
+          cameraMat, distCoeffs, this._rotationMatrix, this._translationVector,
+          this._useExtrinsicGuessForPnP, SolvePnpMethod.Iterative);
+
+        if (this._useExtrinsicGuessForPnP == false)
+          this._useExtrinsicGuessForPnP = true;
+
+        /*
+        axes.Push(new System.Drawing.PointF[] {
+          imageCoords[0], imageCoords[1], imageCoords[2]//, imageCoords[3]
+        });
+        */
+
+        this._rotationMatrix.ConvertTo(rotationMat, DepthType.Cv32F);
+        this._translationVector.ConvertTo(translationVector, DepthType.Cv32F);
       }
 
-      centerVector = new UnityEngine.Vector3(center.X, 0, center.Y);
-
-      return foundCenter;
-    }
-
-    private System.Drawing.PointF FindMidpoint(System.Drawing.PointF a, System.Drawing.PointF b)
-    {
-      /*
-      float slope = (b.Y - a.Y) / (b.X - a.X);
-      double magnitude = Math.Sqrt(Math.Pow(b.X - a.X, 2) + Math.Pow(b.Y - a.Y, 2));
-      System.Drawing.PointF midpoint = new System.Drawing.PointF();
-
-      midpoint.Y = a.Y + (float) Math.Sqrt(Math.Pow(0.5 * slope * magnitude, 2) / (1 + Math.Pow(magnitude, 2)));
-      midpoint.X = a.X + (float) Math.Sqrt(Math.Pow(0.5 * magnitude, 2) - Math.Pow(midpoint.Y - a.Y, 2));
-      */
-      System.Drawing.PointF midpoint = new System.Drawing.PointF(
-        (a.X + b.X) / 2,
-        (a.Y + b.Y) / 2
-      );
-
-      return midpoint;
+      return foundPose;
     }
 
     public bool DrawOrientationAxis(Mat srcFrame, out Mat dstFrame)
