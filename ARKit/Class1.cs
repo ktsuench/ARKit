@@ -249,7 +249,7 @@ namespace ARKit
       this._translationVector = new Mat();
       this._state = FeatureState.MATCHING;
     }
-    
+
     public Mat Descriptors { get => this._DESCRIPTORS; }
     public int Inliers { get => this._inliers; }
     public double InlierRatio { get => this._inlierRatio; }
@@ -340,7 +340,7 @@ namespace ARKit
       {
         Hm = new Matrix<double>(
           this._homographyMatchMat.Rows, this._homographyMatchMat.Cols);
-        
+
         this._homographyMatchMat.CopyTo(Hm);
 
         homography = new Mat();
@@ -730,11 +730,17 @@ namespace ARKit
       return foundPose;
     }
 
+    // refer to https://github.com/juangallostra/augmented-reality/blob/master/src/ar_main.py
+    public bool GetExtrinsics(Mat intrinsics, Mat homography)
+    {
+      double[,] H = new Matrix
+    }
+
     public bool GetCenter(IInputArray cameraMat, IInputArray distCoeffs, out Mat rotationMat, out Mat translationVector, out float[] center)
     {
       center = new float[3];
 
-      if (GetPose(cameraMat, distCoeffs, out rotationMat, out translationVector))
+      if (GetPose(cameraMat, distCoeffs, out rotationMat, out translationVector) && GetHomography(out Mat H))
       {
         System.Drawing.PointF[] imageCoord = CvInvoke.ProjectPoints(new MCvPoint3D32f[] { new MCvPoint3D32f(this.BORDER[1].X / 2, this.BORDER[2].Y / 2, 1) },
           rotationMat, translationVector, cameraMat, distCoeffs);
@@ -743,7 +749,12 @@ namespace ARKit
         center[1] = imageCoord[0].Y;
         center[2] = 1;
 
-        return true;
+        Matrix<double> centerMat = new Matrix<double>(3, 1);
+        centerMat[0, 0] = center[0];
+        centerMat[1, 0] = center[1];
+        centerMat[2, 0] = center[2];
+
+
       }
 
       return false;
