@@ -9,6 +9,9 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Accord.Math;
+using System.Media;
+using MathNet.Numerics;
 
 namespace ARKit
 {
@@ -623,46 +626,131 @@ namespace ARKit
       }
     }
 
-    public bool GetProjectionMatrix(out UnityEngine.Matrix4x4 projectionMatrix)
-    {
-      projectionMatrix = new UnityEngine.Matrix4x4();
-
-      if (this.GetHomography(out Mat homography))
-      {
-        try
+        public bool GetProjectionMatrix(out UnityEngine.Matrix4x4 projectionMatrix)
         {
-          if (homography.Size.Height > 0 && homography.Size.Width > 0)
-          {
-            projectionMatrix.m00 = (float)homography.GetValue(0, 0);
-            projectionMatrix.m01 = (float)homography.GetValue(0, 1);
-            projectionMatrix.m02 = 0;
-            projectionMatrix.m03 = (float)homography.GetValue(0, 2);
-            projectionMatrix.m10 = (float)homography.GetValue(1, 0);
-            projectionMatrix.m11 = (float)homography.GetValue(1, 1);
-            projectionMatrix.m12 = 0;
-            projectionMatrix.m13 = (float)homography.GetValue(1, 2);
-            projectionMatrix.m20 = 0;
-            projectionMatrix.m21 = 0;
-            projectionMatrix.m22 = 1;
-            projectionMatrix.m23 = 0;
-            projectionMatrix.m30 = (float)homography.GetValue(2, 0);
-            projectionMatrix.m31 = (float)homography.GetValue(2, 1);
-            projectionMatrix.m32 = 0;
-            projectionMatrix.m33 = (float)homography.GetValue(2, 2);
+            projectionMatrix = new UnityEngine.Matrix4x4();
 
-            return true;
-          }
+            if (this.GetHomography(out Mat homography))
+            {
+                try
+                {
+                    if (homography.Size.Height > 0 && homography.Size.Width > 0)
+                    {
+                        projectionMatrix.m00 = (float)homography.GetValue(0, 0);
+                        projectionMatrix.m01 = (float)homography.GetValue(0, 1);
+                        projectionMatrix.m02 = 0;
+                        projectionMatrix.m03 = (float)homography.GetValue(0, 2);
+                        projectionMatrix.m10 = (float)homography.GetValue(1, 0);
+                        projectionMatrix.m11 = (float)homography.GetValue(1, 1);
+                        projectionMatrix.m12 = 0;
+                        projectionMatrix.m13 = (float)homography.GetValue(1, 2);
+                        projectionMatrix.m20 = 0;
+                        projectionMatrix.m21 = 0;
+                        projectionMatrix.m22 = 1;
+                        projectionMatrix.m23 = 0;
+                        projectionMatrix.m30 = (float)homography.GetValue(2, 0);
+                        projectionMatrix.m31 = (float)homography.GetValue(2, 1);
+                        projectionMatrix.m32 = 0;
+                        projectionMatrix.m33 = (float)homography.GetValue(2, 2);
+
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // do nothing
+                }
+            }
+
+            return false;
         }
-        catch (Exception ex)
+
+    
+        public Matrix<double> projection_mat(Matrix<double> H, Matrix<double> Cam_Mat)
         {
-          // do nothing
+                H = H * -1;
+                Matrix<double> rot_trans;
+                rot_trans = H * Cam_Mat;
+
+
+
+                Matrix<double> col1 = rot_trans.GetCol(0);
+                Matrix<double> col2 = rot_trans.GetCol(1);
+                Matrix<double> col3 = rot_trans.GetCol(2);
+
+                //normalizing vectors
+               double l =  Math.Sqrt(col1.Norm * col2.Norm);
+
+                Matrix<double> rot = col1 / l;
+                Matrix<double> rot_2 = col2 / l;
+                Matrix<double> tr = col3 / l;
+                
+                //calculating the othogonal base
+                Matrix<double> c = rot + rot_2;
+                Matrix<double> p = CrossProduct(rot, rot_2);
+                Matrix<double> d = CrossProduct(c, p);
+
+                rot = ((c / c.Norm) + (d / d.Norm)) * (1 / Math.Sqrt(2));
+                rot_2 = ((c / c.Norm) - (d / d.Norm)) * (1 / Math.Sqrt(2));
+
+                Matrix<double> rot_3 = CrossProduct(rot, rot_2);
+
+
+                rot = rot.Add(rot_2);
+                rot = rot.Add(rot_3);
+                rot = rot.Add(tr);
+
+                Matrix<double> res = rot.Transpose();
+                res = res * Cam_Mat;
+                res = ConvertTo4_4(res); // adding the [0 0 0 1] to the last row to convert into a 4x4 for Unity's Dimension
+                res  = ConvertToLHS(res);   // convert to the LHS for Unity
+                return res;
+            }
+
+        private Matrix<double> ConvertTo4_4(Matrix<double> a)
+        {
+            Matrix<double> bott_row = null;
+            bott_row.Data.SetValue(0, 0);
+            bott_row.Data.SetValue(0, 1);
+            bott_row.Data.SetValue(0, 2);
+            bott_row.Data.SetValue(1, 3);
+
+            a.Add(bott_row);
+            return a;
         }
-      }
 
-      return false;
-    }
+        public Matrix<double> ConvertToLHS(Matrix<double> rot_mat)
+        {
+            var LHSflipBackMatrix = new Matrix<double>(4, 4);
+            LHSflipBackMatrix.SetIdentity();
+            LHSflipBackMatrix[0, 0] = -1.0;
+            LHSflipBackMatrix[1, 1] = -1.0;
+            LHSflipBackMatrix[2, 2] = -1.0;
+            return rot_mat * LHSflipBackMatrix; ;
+        }
 
-    public bool GetPose(IInputArray cameraMat, IInputArray distCoeffs, out Mat rotationMat, out Mat translationVector)
+
+           public Matrix<double> CrossProduct(Matrix<double> a, Matrix<double> b){
+
+                //cx = aybz − azby
+                double c_x = (Convert.ToDouble(a.Data.GetValue(1)) * Convert.ToDouble(b.Data.GetValue(2))) - (Convert.ToDouble(a.Data.GetValue(2)) * Convert.ToDouble(b.Data.GetValue(1)));
+
+                //cy = azbx − axbz
+                double c_y = (Convert.ToDouble(a.Data.GetValue(2)) - Convert.ToDouble(b.Data.GetValue(0))) - (Convert.ToDouble(a.Data.GetValue(0)) - Convert.ToDouble(b.Data.GetValue(2)));
+
+                //cz = axby − aybx
+                double c_z = (Convert.ToDouble(a.Data.GetValue(0)) - Convert.ToDouble(b.Data.GetValue(1))) - (Convert.ToDouble(a.Data.GetValue(1)) - Convert.ToDouble(b.Data.GetValue(0)));
+
+                Matrix<double> res = null;
+                res.Data.SetValue(c_x, 0);
+                res.Data.SetValue(c_y, 1);
+                res.Data.SetValue(c_z, 2);
+
+                return res;
+
+            }
+
+            public bool GetPose(IInputArray cameraMat, IInputArray distCoeffs, out Mat rotationMat, out Mat translationVector)
     {
       VectorOfPoint3D32F objectCoords = new VectorOfPoint3D32F(new MCvPoint3D32f[]
       {
