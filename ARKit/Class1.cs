@@ -181,7 +181,7 @@ namespace ARKit
   {
     private static readonly float ACCEPTABLE_TRACKING_AVERAGE_ERROR = 20.0f;
     private static readonly float INLIER_THRESHOLD = 2.5f;
-    private static readonly float INLIER_USABLE_THRESHOLD = 0.6f;
+    private static readonly float INLIER_USABLE_THRESHOLD = 0.3f;
     private static readonly int KTH_NEAREST_NEIGHBOUR = 2;
     private static readonly int MAX_PYRAMID_LEVELS = 3; // default used in OpenCV
     private static readonly int MATCHES_REQUIRED = 10;
@@ -252,7 +252,7 @@ namespace ARKit
       this._translationVector = new Mat();
       this._state = FeatureState.MATCHING;
     }
-    
+
     public Mat Descriptors { get => this._DESCRIPTORS; }
     public int Inliers { get => this._inliers; }
     public double InlierRatio { get => this._inlierRatio; }
@@ -343,7 +343,7 @@ namespace ARKit
       {
         Hm = new Matrix<double>(
           this._homographyMatchMat.Rows, this._homographyMatchMat.Cols);
-        
+
         this._homographyMatchMat.CopyTo(Hm);
 
         homography = new Mat();
@@ -412,6 +412,7 @@ namespace ARKit
 
     public void ComputeAndMatch()
     {
+
       VectorOfKeyPoint imageKeypoints = new VectorOfKeyPoint();
       Mat imageDescriptors = new Mat(), image = Memory.Frame.Clone();
       // DMatch type explanation
@@ -461,13 +462,13 @@ namespace ARKit
             });
           }
         }
-
+        
         // only generate homography matrix if more than 50 matches found
         if (itemCoords.Size > MATCHES_REQUIRED)
         {
           inliers = CheckHomography(itemCoords, imageCoords, out Mat homography);
           inlierRatio = inliers * 1.0 / itemCoords.Size;
-
+          UnityEngine.MonoBehaviour.print("matches " + itemCoords.Size + " inlier ratio " + inlierRatio);
           if (inlierRatio > INLIER_USABLE_THRESHOLD)
           {
             this._homographyMatchMat.Dispose();
@@ -626,131 +627,161 @@ namespace ARKit
       }
     }
 
-        public bool GetProjectionMatrix(out UnityEngine.Matrix4x4 projectionMatrix)
+    public bool GetProjectionMatrix(out UnityEngine.Matrix4x4 projectionMatrix)
+    {
+      projectionMatrix = new UnityEngine.Matrix4x4();
+
+      if (this.GetHomography(out Mat homography))
+      {
+        try
         {
-            projectionMatrix = new UnityEngine.Matrix4x4();
+          if (homography.Size.Height > 0 && homography.Size.Width > 0)
+          {
+            projectionMatrix.m00 = (float)homography.GetValue(0, 0);
+            projectionMatrix.m01 = (float)homography.GetValue(0, 1);
+            projectionMatrix.m02 = 0;
+            projectionMatrix.m03 = (float)homography.GetValue(0, 2);
+            projectionMatrix.m10 = (float)homography.GetValue(1, 0);
+            projectionMatrix.m11 = (float)homography.GetValue(1, 1);
+            projectionMatrix.m12 = 0;
+            projectionMatrix.m13 = (float)homography.GetValue(1, 2);
+            projectionMatrix.m20 = 0;
+            projectionMatrix.m21 = 0;
+            projectionMatrix.m22 = 1;
+            projectionMatrix.m23 = 0;
+            projectionMatrix.m30 = (float)homography.GetValue(2, 0);
+            projectionMatrix.m31 = (float)homography.GetValue(2, 1);
+            projectionMatrix.m32 = 0;
+            projectionMatrix.m33 = (float)homography.GetValue(2, 2);
 
-            if (this.GetHomography(out Mat homography))
-            {
-                try
-                {
-                    if (homography.Size.Height > 0 && homography.Size.Width > 0)
-                    {
-                        projectionMatrix.m00 = (float)homography.GetValue(0, 0);
-                        projectionMatrix.m01 = (float)homography.GetValue(0, 1);
-                        projectionMatrix.m02 = 0;
-                        projectionMatrix.m03 = (float)homography.GetValue(0, 2);
-                        projectionMatrix.m10 = (float)homography.GetValue(1, 0);
-                        projectionMatrix.m11 = (float)homography.GetValue(1, 1);
-                        projectionMatrix.m12 = 0;
-                        projectionMatrix.m13 = (float)homography.GetValue(1, 2);
-                        projectionMatrix.m20 = 0;
-                        projectionMatrix.m21 = 0;
-                        projectionMatrix.m22 = 1;
-                        projectionMatrix.m23 = 0;
-                        projectionMatrix.m30 = (float)homography.GetValue(2, 0);
-                        projectionMatrix.m31 = (float)homography.GetValue(2, 1);
-                        projectionMatrix.m32 = 0;
-                        projectionMatrix.m33 = (float)homography.GetValue(2, 2);
-
-                        return true;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // do nothing
-                }
-            }
-
-            return false;
+            return true;
+          }
         }
-
-    
-        public Matrix<double> projection_mat(Matrix<double> H, Matrix<double> Cam_Mat)
+        catch (Exception ex)
         {
-                H = H * -1;
-                Matrix<double> rot_trans;
-                rot_trans = H * Cam_Mat;
-
-
-
-                Matrix<double> col1 = rot_trans.GetCol(0);
-                Matrix<double> col2 = rot_trans.GetCol(1);
-                Matrix<double> col3 = rot_trans.GetCol(2);
-
-                //normalizing vectors
-               double l =  Math.Sqrt(col1.Norm * col2.Norm);
-
-                Matrix<double> rot = col1 / l;
-                Matrix<double> rot_2 = col2 / l;
-                Matrix<double> tr = col3 / l;
-                
-                //calculating the othogonal base
-                Matrix<double> c = rot + rot_2;
-                Matrix<double> p = CrossProduct(rot, rot_2);
-                Matrix<double> d = CrossProduct(c, p);
-
-                rot = ((c / c.Norm) + (d / d.Norm)) * (1 / Math.Sqrt(2));
-                rot_2 = ((c / c.Norm) - (d / d.Norm)) * (1 / Math.Sqrt(2));
-
-                Matrix<double> rot_3 = CrossProduct(rot, rot_2);
-
-
-                rot = rot.Add(rot_2);
-                rot = rot.Add(rot_3);
-                rot = rot.Add(tr);
-
-                Matrix<double> res = rot.Transpose();
-                res = res * Cam_Mat;
-                res = ConvertTo4_4(res); // adding the [0 0 0 1] to the last row to convert into a 4x4 for Unity's Dimension
-                res  = ConvertToLHS(res);   // convert to the LHS for Unity
-                return res;
-            }
-
-        private Matrix<double> ConvertTo4_4(Matrix<double> a)
-        {
-            Matrix<double> bott_row = null;
-            bott_row.Data.SetValue(0, 0);
-            bott_row.Data.SetValue(0, 1);
-            bott_row.Data.SetValue(0, 2);
-            bott_row.Data.SetValue(1, 3);
-
-            a.Add(bott_row);
-            return a;
+          // do nothing
         }
+      }
 
-        public Matrix<double> ConvertToLHS(Matrix<double> rot_mat)
-        {
-            var LHSflipBackMatrix = new Matrix<double>(4, 4);
-            LHSflipBackMatrix.SetIdentity();
-            LHSflipBackMatrix[0, 0] = -1.0;
-            LHSflipBackMatrix[1, 1] = -1.0;
-            LHSflipBackMatrix[2, 2] = -1.0;
-            return rot_mat * LHSflipBackMatrix; ;
-        }
+      return false;
+    }
 
 
-           public Matrix<double> CrossProduct(Matrix<double> a, Matrix<double> b){
+    public Matrix<double> projection_mat(Matrix<double> H, Matrix<double> Cam_Mat)
+    {
+      H = H * -1;
+      Matrix<double> rot_trans;
+      rot_trans = H * Cam_Mat;
 
-                //cx = aybz − azby
-                double c_x = (Convert.ToDouble(a.Data.GetValue(1)) * Convert.ToDouble(b.Data.GetValue(2))) - (Convert.ToDouble(a.Data.GetValue(2)) * Convert.ToDouble(b.Data.GetValue(1)));
+      System.Diagnostics.Debug.WriteLine("Size of the Homography Mat is (row x col): " + Convert.ToString(H.Rows) + " x " + Convert.ToString(H.Cols));
+      System.Diagnostics.Debug.WriteLine("Size of the rot_trans matrix is (row x col): " + Convert.ToString(rot_trans.Rows) + " x " + Convert.ToString(rot_trans.Cols));
 
-                //cy = azbx − axbz
-                double c_y = (Convert.ToDouble(a.Data.GetValue(2)) - Convert.ToDouble(b.Data.GetValue(0))) - (Convert.ToDouble(a.Data.GetValue(0)) - Convert.ToDouble(b.Data.GetValue(2)));
+      Matrix<double> col1 = rot_trans.GetCol(0);
+      Matrix<double> col2 = rot_trans.GetCol(1);
+      Matrix<double> col3 = rot_trans.GetCol(2);
 
-                //cz = axby − aybx
-                double c_z = (Convert.ToDouble(a.Data.GetValue(0)) - Convert.ToDouble(b.Data.GetValue(1))) - (Convert.ToDouble(a.Data.GetValue(1)) - Convert.ToDouble(b.Data.GetValue(0)));
+      System.Diagnostics.Debug.WriteLine("Size of the col is (row x col): " + Convert.ToString(col1.Rows) + " x " + Convert.ToString(col1.Cols));
 
-                Matrix<double> res = null;
-                res.Data.SetValue(c_x, 0);
-                res.Data.SetValue(c_y, 1);
-                res.Data.SetValue(c_z, 2);
+      //normalizing vectors
+      double l = Math.Sqrt(col1.Norm * col2.Norm);
 
-                return res;
+      System.Diagnostics.Debug.WriteLine("Value of l: " + Convert.ToString(l));
 
-            }
+      Matrix<double> rot = col1 / l;
+      Matrix<double> rot_2 = col2 / l;
+      Matrix<double> tr = col3 / l;
 
-            public bool GetPose(IInputArray cameraMat, IInputArray distCoeffs, out Mat rotationMat, out Mat translationVector)
+      //calculating the othogonal base
+      Matrix<double> c = rot + rot_2;
+      Matrix<double> p = CrossProduct(rot, rot_2);
+      Matrix<double> d = CrossProduct(c, p);
+      System.Diagnostics.Debug.WriteLine("Size of the c matrix is (row x col): " + Convert.ToString(c.Rows) + " x " + Convert.ToString(c.Cols));
+      System.Diagnostics.Debug.WriteLine("Size of the p matrix is (row x col): " + Convert.ToString(p.Rows) + " x " + Convert.ToString(p.Cols));
+      System.Diagnostics.Debug.WriteLine("Size of the d matrix is (row x col): " + Convert.ToString(d.Rows) + " x " + Convert.ToString(d.Cols));
+
+     
+      rot = (c / CvInvoke.Norm(c) + (d / CvInvoke.Norm(d))) * (1 / Math.Sqrt(2));
+      rot_2 = (c / CvInvoke.Norm(c)) - (d / CvInvoke.Norm(d)) * (1 / Math.Sqrt(2));
+
+      Matrix<double> rot_3 = CrossProduct(rot, rot_2);
+      System.Diagnostics.Debug.WriteLine("Size of the rot matrix is (row x col): " + Convert.ToString(rot.Rows) + " x " + Convert.ToString(rot.Cols));
+
+      //rot = rot.Transpose();
+      //rot_2 = rot_2.Transpose();
+      //rot_3 = rot_3.Transpose();
+      rot = rot.ConcateHorizontal(rot_2);
+      rot = rot.ConcateHorizontal(rot_3);
+      rot = rot.ConcateHorizontal(tr);
+      //rot = rot.Add(rot_2);
+      //rot = rot.Add(rot_3);
+      //rot = rot.Add(tr);
+      System.Diagnostics.Debug.WriteLine("Size of the rotation(pre-4_4_conv) matrix is (row x col): " + Convert.ToString(rot.Rows) + " x " + Convert.ToString(rot.Cols));
+
+      // Matrix<double> res = rot.Transpose();
+      rot =  Cam_Mat * rot;
+      rot = ConvertTo4_4(rot); // adding the [0 0 0 1] to the last row to convert into a 4x4 for Unity's Dimension
+      rot = ConvertToLHS(rot);   // convert to the LHS for Unity
+      return rot;
+    }
+
+    private Matrix<double> ConvertTo4_4(Matrix<double> a)
+    {
+      var bott_row = new Matrix<double>(1, 4);
+
+      double col = a.Width;
+      double row = a.Height;
+
+
+      bott_row[0, 0] = 0;
+      bott_row[0, 1] = 0;
+      bott_row[0, 2] = 0;
+      bott_row[0, 3] = 1;
+      System.Diagnostics.Debug.WriteLine("Size of the convert4x4 matrix is (row x col): " + Convert.ToString(bott_row.Rows) + " x " + Convert.ToString(bott_row.Cols));
+
+      // a.Add(bott_row);
+      a = a.ConcateVertical(bott_row);
+      UnityEngine.MonoBehaviour.print("convert to 4 by 4 " + a.Rows + " " + a.Cols);
+      return a;
+    }
+
+    public Matrix<double> ConvertToLHS(Matrix<double> rot_mat)
+    {
+      var LHSflipBackMatrix = new Matrix<double>(4, 4);
+      LHSflipBackMatrix.SetIdentity();
+      LHSflipBackMatrix[0, 0] = -1.0;
+      LHSflipBackMatrix[1, 1] = -1.0;
+      LHSflipBackMatrix[2, 2] = -1.0;
+      UnityEngine.MonoBehaviour.print("convert from r to l " + rot_mat.Rows + " " + rot_mat.Cols);
+      return rot_mat * LHSflipBackMatrix;
+    }
+
+
+    public Matrix<double> CrossProduct(Matrix<double> a, Matrix<double> b)
+    {
+
+      //cx = aybz − azby
+      double c_x = (Convert.ToDouble(a[1, 0]) * Convert.ToDouble(b[2, 0])) - (Convert.ToDouble(a[2, 0]) * Convert.ToDouble(b[1, 0]));
+
+      //cy = azbx − axbz
+      double c_y = (Convert.ToDouble(a[2, 0]) - Convert.ToDouble(b[0, 0])) - (Convert.ToDouble(a[0, 0]) - Convert.ToDouble(b[2, 0]));
+
+      //cz = axby − aybx
+      double c_z = (Convert.ToDouble(a[0, 0]) - Convert.ToDouble(b[1, 0])) - (Convert.ToDouble(a[1, 0]) - Convert.ToDouble(b[0, 0]));
+
+      System.Diagnostics.Debug.WriteLine("c_x: " + Convert.ToString(c_x));
+      System.Diagnostics.Debug.WriteLine("c_y: " + Convert.ToString(c_y));
+      System.Diagnostics.Debug.WriteLine("c_z: " + Convert.ToString(c_z));
+      var res = new Matrix<double>(3, 1);
+      res[0, 0] = c_x;
+      res[1, 0] = c_y;
+      res[2, 0] = c_z;
+
+
+      return res;
+
+    }
+
+    public bool GetPose(IInputArray cameraMat, IInputArray distCoeffs, out Mat rotationMat, out Mat translationVector)
     {
       VectorOfPoint3D32F objectCoords = new VectorOfPoint3D32F(new MCvPoint3D32f[]
       {
@@ -1202,6 +1233,106 @@ namespace ARKit
         if (27 == CvInvoke.WaitKey(100)) break; // 27 is ESC key
       }
     }
+
+    public static void TestProjectionMatrix(string imageFilePath, string keypointsFilePath, string image2FilePath, string image3FilePath)
+    {
+      Size size = new Size(720, 1080);
+      System.Diagnostics.Debug.WriteLine("Starting Program...");
+
+      // getting key points of original image
+      FeaturePoints.ComputeAndSave(imageFilePath, keypointsFilePath);
+      FeaturePoints fp = FeaturePoints.ReadData(keypointsFilePath, unity: false);
+
+      Camera capture = new Camera(0, size, false);
+
+      // Getting intrisic files
+      InitialFrame ip = new InitialFrame(capture, new Size(4, 7), 30);
+      System.Diagnostics.Debug.WriteLine("Going for Intrinsics...");
+      //ip.Start();
+      ip.ReadFromFile();
+      System.Diagnostics.Debug.WriteLine("Got Intrinsics");
+
+      //setting the matched image
+      Memory.Frame = CvInvoke.Imread(image2FilePath);
+
+      // trying to detect matched image
+      fp.ComputeAndMatch();
+      System.Diagnostics.Debug.WriteLine("Trying to  Match");
+
+      if (fp.FindObject())
+      {
+        String win1 = "Matching - Projection Matrix Test";
+        //CvInvoke.NamedWindow(win1, NamedWindowType.Normal);
+
+        //call to projection matrix
+        if (fp.GetHomography(out Emgu.CV.Mat H))
+        {
+          Emgu.CV.Matrix<double> H_mat = new Emgu.CV.Matrix<double>(3, 3);
+          Emgu.CV.Matrix<double> cam_mat = new Emgu.CV.Matrix<double>(3, 3);
+          for (int i = 0; i < 3; i++)
+          {
+            for (int j = 0; j < 3; j++)
+            {
+              double val = ARKit.MatExtension.GetValue(H, i, j);
+              //print("i: " + i.ToString());
+              //print("j: " + j.ToString());
+              H_mat[i, j] = val;
+
+              val = ARKit.MatExtension.GetValue(ip.CameraMatrix, i, j);
+              cam_mat[i, j] = val;
+            }
+          }
+          Emgu.CV.Matrix<double> proj_match = fp.projection_mat(H_mat, cam_mat);
+        }
+      }
+
+
+      System.Diagnostics.Debug.WriteLine("Finished Matching");
+
+      //Tracking Begins
+
+      //setting the memory frame to third image
+      Memory.Frame = CvInvoke.Imread(image3FilePath);
+
+      fp.TrackObject();
+
+      if (fp.FindObject(false))
+      {
+        System.Diagnostics.Debug.WriteLine("Started Tracking");
+        // String win2 = "Tracking - Projection Matrix Test";
+        //CvInvoke.NamedWindow(win2, NamedWindowType.Normal);
+
+        //call to projection matrix
+        if (fp.GetHomography(out Emgu.CV.Mat H_track))
+        {
+          Emgu.CV.Matrix<double> H_mat = new Emgu.CV.Matrix<double>(3, 3);
+          Emgu.CV.Matrix<double> cam_mat = new Emgu.CV.Matrix<double>(3, 3);
+          for (int i = 0; i < 3; i++)
+          {
+            for (int j = 0; j < 3; j++)
+            {
+              double val = ARKit.MatExtension.GetValue(H_track, i, j);
+              //print("i: " + i.ToString());
+              //print("j: " + j.ToString());
+              H_mat[i, j] = val;
+
+              val = ARKit.MatExtension.GetValue(ip.CameraMatrix, i, j);
+              cam_mat[i, j] = val;
+            }
+          }
+          Emgu.CV.Matrix<double> proj_track = fp.projection_mat(H_mat, cam_mat);
+
+        }
+
+      }
+
+      System.Diagnostics.Debug.WriteLine("Finished Tracking & Matching");
+
+    }
+
+
+
+
 
     public static void ReadIntrinsicsFile()
     {
