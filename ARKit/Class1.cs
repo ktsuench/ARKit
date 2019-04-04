@@ -468,7 +468,7 @@ namespace ARKit
         {
           inliers = CheckHomography(itemCoords, imageCoords, out Mat homography);
           inlierRatio = inliers * 1.0 / itemCoords.Size;
-          UnityEngine.MonoBehaviour.print("matches " + itemCoords.Size + " inlier ratio " + inlierRatio);
+          //UnityEngine.MonoBehaviour.print("matches " + itemCoords.Size + " inlier ratio " + inlierRatio);
           if (inlierRatio > INLIER_USABLE_THRESHOLD)
           {
             this._homographyMatchMat.Dispose();
@@ -671,7 +671,9 @@ namespace ARKit
     {
       H = H * -1;
       Matrix<double> rot_trans;
-      rot_trans = H * Cam_Mat;
+      Matrix<double> Cam_Mat_Inv = new Matrix<double>(3, 3);
+      CvInvoke.Invert(Cam_Mat, Cam_Mat_Inv, DecompMethod.LU);
+      rot_trans = Cam_Mat_Inv * H;
 
       System.Diagnostics.Debug.WriteLine("Size of the Homography Mat is (row x col): " + Convert.ToString(H.Rows) + " x " + Convert.ToString(H.Cols));
       System.Diagnostics.Debug.WriteLine("Size of the rot_trans matrix is (row x col): " + Convert.ToString(rot_trans.Rows) + " x " + Convert.ToString(rot_trans.Cols));
@@ -683,54 +685,45 @@ namespace ARKit
       System.Diagnostics.Debug.WriteLine("Size of the col is (row x col): " + Convert.ToString(col1.Rows) + " x " + Convert.ToString(col1.Cols));
 
       //normalizing vectors
-      double l = Math.Sqrt(col1.Norm * col2.Norm);
+      double l = Math.Sqrt(CvInvoke.Norm(col1) * CvInvoke.Norm(col2));
 
       System.Diagnostics.Debug.WriteLine("Value of l: " + Convert.ToString(l));
 
-      Matrix<double> rot = col1 / l;
+      Matrix<double> rot_1 = col1 / l;
       Matrix<double> rot_2 = col2 / l;
       Matrix<double> tr = col3 / l;
 
       //calculating the othogonal base
-      Matrix<double> c = rot + rot_2;
-      Matrix<double> p = CrossProduct(rot, rot_2);
+      Matrix<double> c = rot_1 + rot_2;
+      Matrix<double> p = CrossProduct(rot_1, rot_2);
       Matrix<double> d = CrossProduct(c, p);
       System.Diagnostics.Debug.WriteLine("Size of the c matrix is (row x col): " + Convert.ToString(c.Rows) + " x " + Convert.ToString(c.Cols));
       System.Diagnostics.Debug.WriteLine("Size of the p matrix is (row x col): " + Convert.ToString(p.Rows) + " x " + Convert.ToString(p.Cols));
       System.Diagnostics.Debug.WriteLine("Size of the d matrix is (row x col): " + Convert.ToString(d.Rows) + " x " + Convert.ToString(d.Cols));
 
      
-      rot = (c / CvInvoke.Norm(c) + (d / CvInvoke.Norm(d))) * (1 / Math.Sqrt(2));
-      rot_2 = (c / CvInvoke.Norm(c)) - (d / CvInvoke.Norm(d)) * (1 / Math.Sqrt(2));
+      rot_1 = (c / CvInvoke.Norm(c) + d / CvInvoke.Norm(d)) / Math.Sqrt(2);
+      rot_2 = (c / CvInvoke.Norm(c) - d / CvInvoke.Norm(d)) / Math.Sqrt(2);
 
-      Matrix<double> rot_3 = CrossProduct(rot, rot_2);
-      System.Diagnostics.Debug.WriteLine("Size of the rot matrix is (row x col): " + Convert.ToString(rot.Rows) + " x " + Convert.ToString(rot.Cols));
+      Matrix<double> rot_3 = CrossProduct(rot_1, rot_2);
+      System.Diagnostics.Debug.WriteLine("Size of the rot matrix is (row x col): " + Convert.ToString(rot_1.Rows) + " x " + Convert.ToString(rot_1.Cols));
 
-      //rot = rot.Transpose();
-      //rot_2 = rot_2.Transpose();
-      //rot_3 = rot_3.Transpose();
-      rot = rot.ConcateHorizontal(rot_2);
-      rot = rot.ConcateHorizontal(rot_3);
-      rot = rot.ConcateHorizontal(tr);
-      //rot = rot.Add(rot_2);
-      //rot = rot.Add(rot_3);
-      //rot = rot.Add(tr);
-      System.Diagnostics.Debug.WriteLine("Size of the rotation(pre-4_4_conv) matrix is (row x col): " + Convert.ToString(rot.Rows) + " x " + Convert.ToString(rot.Cols));
+      Matrix<double> projection_mat = rot_1
+        .ConcateHorizontal(rot_2)
+        .ConcateHorizontal(rot_3)
+        .ConcateHorizontal(tr);
+      System.Diagnostics.Debug.WriteLine("Size of the rotation(pre-4_4_conv) matrix is (row x col): " + Convert.ToString(projection_mat.Rows) + " x " + Convert.ToString(projection_mat.Cols));
 
       // Matrix<double> res = rot.Transpose();
-      rot =  Cam_Mat * rot;
-      rot = ConvertTo4_4(rot); // adding the [0 0 0 1] to the last row to convert into a 4x4 for Unity's Dimension
-      rot = ConvertToLHS(rot);   // convert to the LHS for Unity
-      return rot;
+      projection_mat = Cam_Mat * projection_mat;
+      projection_mat = ConvertTo4_4(projection_mat); // adding the [0 0 0 1] to the last row to convert into a 4x4 for Unity's Dimension
+      projection_mat = ConvertToLHS(projection_mat);   // convert to the LHS for Unity
+      return projection_mat;
     }
 
     private Matrix<double> ConvertTo4_4(Matrix<double> a)
     {
       var bott_row = new Matrix<double>(1, 4);
-
-      double col = a.Width;
-      double row = a.Height;
-
 
       bott_row[0, 0] = 0;
       bott_row[0, 1] = 0;
@@ -738,9 +731,8 @@ namespace ARKit
       bott_row[0, 3] = 1;
       System.Diagnostics.Debug.WriteLine("Size of the convert4x4 matrix is (row x col): " + Convert.ToString(bott_row.Rows) + " x " + Convert.ToString(bott_row.Cols));
 
-      // a.Add(bott_row);
       a = a.ConcateVertical(bott_row);
-      UnityEngine.MonoBehaviour.print("convert to 4 by 4 " + a.Rows + " " + a.Cols);
+      //UnityEngine.MonoBehaviour.print("convert to 4 by 4 " + a.Rows + " " + a.Cols);
       return a;
     }
 
@@ -751,8 +743,14 @@ namespace ARKit
       LHSflipBackMatrix[0, 0] = -1.0;
       LHSflipBackMatrix[1, 1] = -1.0;
       LHSflipBackMatrix[2, 2] = -1.0;
-      UnityEngine.MonoBehaviour.print("convert from r to l " + rot_mat.Rows + " " + rot_mat.Cols);
-      return rot_mat * LHSflipBackMatrix;
+      //UnityEngine.MonoBehaviour.print("convert from r to l " + rot_mat.Rows + " " + rot_mat.Cols);
+      LHSflipBackMatrix = rot_mat * LHSflipBackMatrix;
+
+      rot_mat = LHSflipBackMatrix.Clone();
+      rot_mat[1, 3] = LHSflipBackMatrix[2, 3];
+      rot_mat[2, 3] = LHSflipBackMatrix[1, 3];
+
+      return rot_mat;
     }
 
 
@@ -760,13 +758,13 @@ namespace ARKit
     {
 
       //cx = aybz − azby
-      double c_x = (Convert.ToDouble(a[1, 0]) * Convert.ToDouble(b[2, 0])) - (Convert.ToDouble(a[2, 0]) * Convert.ToDouble(b[1, 0]));
+      double c_x = (a[1, 0] * b[2, 0]) - (a[2, 0] * b[1, 0]);
 
       //cy = azbx − axbz
-      double c_y = (Convert.ToDouble(a[2, 0]) - Convert.ToDouble(b[0, 0])) - (Convert.ToDouble(a[0, 0]) - Convert.ToDouble(b[2, 0]));
+      double c_y = (a[2, 0] * b[0, 0]) - (a[0, 0] * b[2, 0]);
 
       //cz = axby − aybx
-      double c_z = (Convert.ToDouble(a[0, 0]) - Convert.ToDouble(b[1, 0])) - (Convert.ToDouble(a[1, 0]) - Convert.ToDouble(b[0, 0]));
+      double c_z = (a[0, 0] * b[1, 0]) - (a[1, 0] * b[0, 0]);
 
       System.Diagnostics.Debug.WriteLine("c_x: " + Convert.ToString(c_x));
       System.Diagnostics.Debug.WriteLine("c_y: " + Convert.ToString(c_y));
