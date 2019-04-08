@@ -296,7 +296,7 @@ namespace ARKit
       }
     }
 
-    public static FeaturePoints ReadData(string filepath, Mat homography = null, bool unity = true)
+    public static FeaturePoints ReadData(string filepath, bool unity = true)
     {
       System.Drawing.Size size = new System.Drawing.Size();
       Mat descriptors = new Mat();
@@ -462,7 +462,7 @@ namespace ARKit
             });
           }
         }
-        
+
         // only generate homography matrix if more than 50 matches found
         if (itemCoords.Size > MATCHES_REQUIRED)
         {
@@ -592,27 +592,27 @@ namespace ARKit
 
       if (this._inlierRatio > INLIER_USABLE_THRESHOLD && this._borderPoints.Size > 0)
       {
+        CvInvoke.Line(frame,
+          new System.Drawing.Point((int)this._borderPoints[0].X, (int)this._borderPoints[0].Y),
+          new System.Drawing.Point((int)this._borderPoints[1].X, (int)this._borderPoints[1].Y),
+          new Rgb(255, 0, 0).MCvScalar, 5);
+        CvInvoke.Line(frame,
+          new System.Drawing.Point((int)this._borderPoints[0].X, (int)this._borderPoints[0].Y),
+          new System.Drawing.Point((int)this._borderPoints[2].X, (int)this._borderPoints[2].Y),
+          new Rgb(255, 0, 0).MCvScalar, 5);
+        CvInvoke.Line(frame,
+          new System.Drawing.Point((int)this._borderPoints[2].X, (int)this._borderPoints[2].Y),
+          new System.Drawing.Point((int)this._borderPoints[3].X, (int)this._borderPoints[3].Y),
+          new Rgb(255, 0, 0).MCvScalar, 5);
+        CvInvoke.Line(frame,
+          new System.Drawing.Point((int)this._borderPoints[1].X, (int)this._borderPoints[1].Y),
+          new System.Drawing.Point((int)this._borderPoints[3].X, (int)this._borderPoints[3].Y),
+          new Rgb(255, 0, 0).MCvScalar, 5);
+
         if (drawAxes && cameraMat != null && distCoeffs != null && rotationMat != null && translationVector != null)
         {
-          this.DrawOrientationAxis(cameraMat, distCoeffs, rotationMat, translationVector, Memory.Frame.Clone(), out frame);
+          this.DrawOrientationAxis(cameraMat, distCoeffs, rotationMat, translationVector, frame, out frame);
         }
-
-        CvInvoke.Line(frame,
-          new System.Drawing.Point((int)this._borderPoints[0].X, (int)this._borderPoints[0].Y),
-          new System.Drawing.Point((int)this._borderPoints[1].X, (int)this._borderPoints[1].Y),
-          new Rgb(255, 0, 0).MCvScalar, 5);
-        CvInvoke.Line(frame,
-          new System.Drawing.Point((int)this._borderPoints[0].X, (int)this._borderPoints[0].Y),
-          new System.Drawing.Point((int)this._borderPoints[2].X, (int)this._borderPoints[2].Y),
-          new Rgb(255, 0, 0).MCvScalar, 5);
-        CvInvoke.Line(frame,
-          new System.Drawing.Point((int)this._borderPoints[2].X, (int)this._borderPoints[2].Y),
-          new System.Drawing.Point((int)this._borderPoints[3].X, (int)this._borderPoints[3].Y),
-          new Rgb(255, 0, 0).MCvScalar, 5);
-        CvInvoke.Line(frame,
-          new System.Drawing.Point((int)this._borderPoints[1].X, (int)this._borderPoints[1].Y),
-          new System.Drawing.Point((int)this._borderPoints[3].X, (int)this._borderPoints[3].Y),
-          new Rgb(255, 0, 0).MCvScalar, 5);
       }
 
       using (Image<Bgr, byte> nextFrame = frame.ToImage<Bgr, byte>())
@@ -627,39 +627,30 @@ namespace ARKit
       }
     }
 
-    public bool GetProjectionMatrix(out UnityEngine.Matrix4x4 projectionMatrix)
+    public bool GetProjectionMatrix(IInputArray cameraMat, IInputArray distCoeffs, out Mat projectionMatrix)
     {
-      projectionMatrix = new UnityEngine.Matrix4x4();
+      projectionMatrix = Mat.Eye(4, 4, DepthType.Cv64F, 3);
 
       if (this.GetHomography(out Mat homography))
       {
-        try
+        if (this.GetPose(cameraMat, distCoeffs, out Mat rotationMat, out Mat translationVector))
         {
-          if (homography.Size.Height > 0 && homography.Size.Width > 0)
-          {
-            projectionMatrix.m00 = (float)homography.GetValue(0, 0);
-            projectionMatrix.m01 = (float)homography.GetValue(0, 1);
-            projectionMatrix.m02 = 0;
-            projectionMatrix.m03 = (float)homography.GetValue(0, 2);
-            projectionMatrix.m10 = (float)homography.GetValue(1, 0);
-            projectionMatrix.m11 = (float)homography.GetValue(1, 1);
-            projectionMatrix.m12 = 0;
-            projectionMatrix.m13 = (float)homography.GetValue(1, 2);
-            projectionMatrix.m20 = 0;
-            projectionMatrix.m21 = 0;
-            projectionMatrix.m22 = 1;
-            projectionMatrix.m23 = 0;
-            projectionMatrix.m30 = (float)homography.GetValue(2, 0);
-            projectionMatrix.m31 = (float)homography.GetValue(2, 1);
-            projectionMatrix.m32 = 0;
-            projectionMatrix.m33 = (float)homography.GetValue(2, 2);
+          double val;
 
-            return true;
+          rotationMat = rotationMat.T();
+
+          for (int i = 0; i < rotationMat.Rows; i++)
+          {
+            for (int j = 0; j < rotationMat.Cols; j++)
+            {
+              val = rotationMat.GetValue(i, j) * -1;
+              projectionMatrix.SetValue(i, j, val);
+            }
+            val = translationVector.GetValue(i, 0);
+            projectionMatrix.SetValue(i, 3, val);
           }
-        }
-        catch (Exception ex)
-        {
-          // do nothing
+
+          projectionMatrix.Dot(cameraMat);
         }
       }
 
@@ -667,27 +658,29 @@ namespace ARKit
     }
 
 
-    public Matrix<double> projection_mat(Matrix<double> H, Matrix<double> Cam_Mat)
+    public Matrix<double> projection_mat(Matrix<double> H, Matrix<double> Cam_Mat, out Matrix<double> r, out Matrix<double> t)
     {
+      //CvInvoke.Invert(H, H, DecompMethod.LU);
       H = H * -1;
-      Matrix<double> rot_trans;
+      Matrix<double> rot_trans = H;
       Matrix<double> Cam_Mat_Inv = new Matrix<double>(3, 3);
       CvInvoke.Invert(Cam_Mat, Cam_Mat_Inv, DecompMethod.LU);
-      rot_trans = Cam_Mat_Inv * H;
+      rot_trans = H * Cam_Mat_Inv;
 
-      System.Diagnostics.Debug.WriteLine("Size of the Homography Mat is (row x col): " + Convert.ToString(H.Rows) + " x " + Convert.ToString(H.Cols));
-      System.Diagnostics.Debug.WriteLine("Size of the rot_trans matrix is (row x col): " + Convert.ToString(rot_trans.Rows) + " x " + Convert.ToString(rot_trans.Cols));
+      //System.Diagnostics.Debug.WriteLine("Size of the Homography Mat is (row x col): " + Convert.ToString(H.Rows) + " x " + Convert.ToString(H.Cols));
+      //System.Diagnostics.Debug.WriteLine("Size of the rot_trans matrix is (row x col): " + Convert.ToString(rot_trans.Rows) + " x " + Convert.ToString(rot_trans.Cols));
 
       Matrix<double> col1 = rot_trans.GetCol(0);
       Matrix<double> col2 = rot_trans.GetCol(1);
       Matrix<double> col3 = rot_trans.GetCol(2);
 
-      System.Diagnostics.Debug.WriteLine("Size of the col is (row x col): " + Convert.ToString(col1.Rows) + " x " + Convert.ToString(col1.Cols));
+      //System.Diagnostics.Debug.WriteLine("Size of the col is (row x col): " + Convert.ToString(col1.Rows) + " x " + Convert.ToString(col1.Cols));
 
       //normalizing vectors
       double l = Math.Sqrt(CvInvoke.Norm(col1) * CvInvoke.Norm(col2));
+      //double l = Math.Sqrt(rot_trans[0, 0] * rot_trans[0, 0] + rot_trans[1, 0] * rot_trans[1, 0] + rot_trans[2, 0] * rot_trans[2, 0]);
 
-      System.Diagnostics.Debug.WriteLine("Value of l: " + Convert.ToString(l));
+      //System.Diagnostics.Debug.WriteLine("Value of l: " + Convert.ToString(l));
 
       Matrix<double> rot_1 = col1 / l;
       Matrix<double> rot_2 = col2 / l;
@@ -697,25 +690,28 @@ namespace ARKit
       Matrix<double> c = rot_1 + rot_2;
       Matrix<double> p = CrossProduct(rot_1, rot_2);
       Matrix<double> d = CrossProduct(c, p);
-      System.Diagnostics.Debug.WriteLine("Size of the c matrix is (row x col): " + Convert.ToString(c.Rows) + " x " + Convert.ToString(c.Cols));
-      System.Diagnostics.Debug.WriteLine("Size of the p matrix is (row x col): " + Convert.ToString(p.Rows) + " x " + Convert.ToString(p.Cols));
-      System.Diagnostics.Debug.WriteLine("Size of the d matrix is (row x col): " + Convert.ToString(d.Rows) + " x " + Convert.ToString(d.Cols));
+      //System.Diagnostics.Debug.WriteLine("Size of the c matrix is (row x col): " + Convert.ToString(c.Rows) + " x " + Convert.ToString(c.Cols));
+      //System.Diagnostics.Debug.WriteLine("Size of the p matrix is (row x col): " + Convert.ToString(p.Rows) + " x " + Convert.ToString(p.Cols));
+      //System.Diagnostics.Debug.WriteLine("Size of the d matrix is (row x col): " + Convert.ToString(d.Rows) + " x " + Convert.ToString(d.Cols));
 
-     
       rot_1 = (c / CvInvoke.Norm(c) + d / CvInvoke.Norm(d)) / Math.Sqrt(2);
       rot_2 = (c / CvInvoke.Norm(c) - d / CvInvoke.Norm(d)) / Math.Sqrt(2);
 
       Matrix<double> rot_3 = CrossProduct(rot_1, rot_2);
-      System.Diagnostics.Debug.WriteLine("Size of the rot matrix is (row x col): " + Convert.ToString(rot_1.Rows) + " x " + Convert.ToString(rot_1.Cols));
+      //System.Diagnostics.Debug.WriteLine("Size of the rot matrix is (row x col): " + Convert.ToString(rot_1.Rows) + " x " + Convert.ToString(rot_1.Cols));
 
-      Matrix<double> projection_mat = rot_1
+      Matrix<double> extrinsics = rot_1
         .ConcateHorizontal(rot_2)
         .ConcateHorizontal(rot_3)
         .ConcateHorizontal(tr);
-      System.Diagnostics.Debug.WriteLine("Size of the rotation(pre-4_4_conv) matrix is (row x col): " + Convert.ToString(projection_mat.Rows) + " x " + Convert.ToString(projection_mat.Cols));
+      //System.Diagnostics.Debug.WriteLine("Size of the rotation(pre-4_4_conv) matrix is (row x col): " + Convert.ToString(projection_mat.Rows) + " x " + Convert.ToString(projection_mat.Cols));
 
-      // Matrix<double> res = rot.Transpose();
-      projection_mat = Cam_Mat * projection_mat;
+      r = rot_1
+        .ConcateHorizontal(rot_2)
+        .ConcateHorizontal(rot_3);
+      t = tr.Clone();
+
+      Matrix<double> projection_mat = Cam_Mat * extrinsics;
       projection_mat = ConvertTo4_4(projection_mat); // adding the [0 0 0 1] to the last row to convert into a 4x4 for Unity's Dimension
       projection_mat = ConvertToLHS(projection_mat);   // convert to the LHS for Unity
       return projection_mat;
@@ -729,7 +725,7 @@ namespace ARKit
       bott_row[0, 1] = 0;
       bott_row[0, 2] = 0;
       bott_row[0, 3] = 1;
-      System.Diagnostics.Debug.WriteLine("Size of the convert4x4 matrix is (row x col): " + Convert.ToString(bott_row.Rows) + " x " + Convert.ToString(bott_row.Cols));
+      //System.Diagnostics.Debug.WriteLine("Size of the convert4x4 matrix is (row x col): " + Convert.ToString(bott_row.Rows) + " x " + Convert.ToString(bott_row.Cols));
 
       a = a.ConcateVertical(bott_row);
       //UnityEngine.MonoBehaviour.print("convert to 4 by 4 " + a.Rows + " " + a.Cols);
@@ -740,15 +736,18 @@ namespace ARKit
     {
       var LHSflipBackMatrix = new Matrix<double>(4, 4);
       LHSflipBackMatrix.SetIdentity();
-      LHSflipBackMatrix[0, 0] = -1.0;
-      LHSflipBackMatrix[1, 1] = -1.0;
-      LHSflipBackMatrix[2, 2] = -1.0;
+      //LHSflipBackMatrix[0, 0] = -1.0;
+      //LHSflipBackMatrix[1, 1] = -1.0;
+      //LHSflipBackMatrix[2, 2] = -1.0;
       //UnityEngine.MonoBehaviour.print("convert from r to l " + rot_mat.Rows + " " + rot_mat.Cols);
       LHSflipBackMatrix = rot_mat * LHSflipBackMatrix;
 
       rot_mat = LHSflipBackMatrix.Clone();
-      rot_mat[1, 3] = LHSflipBackMatrix[2, 3];
-      rot_mat[2, 3] = LHSflipBackMatrix[1, 3];
+      rot_mat[0, 3] *= -1;
+      rot_mat[1, 3] *= -1;
+      rot_mat[2, 3] *= -1;
+      //rot_mat[1, 3] = LHSflipBackMatrix[2, 3];
+      //rot_mat[2, 3] = LHSflipBackMatrix[1, 3];
 
       return rot_mat;
     }
@@ -766,9 +765,9 @@ namespace ARKit
       //cz = axby − aybx
       double c_z = (a[0, 0] * b[1, 0]) - (a[1, 0] * b[0, 0]);
 
-      System.Diagnostics.Debug.WriteLine("c_x: " + Convert.ToString(c_x));
-      System.Diagnostics.Debug.WriteLine("c_y: " + Convert.ToString(c_y));
-      System.Diagnostics.Debug.WriteLine("c_z: " + Convert.ToString(c_z));
+      //System.Diagnostics.Debug.WriteLine("c_x: " + Convert.ToString(c_x));
+      //System.Diagnostics.Debug.WriteLine("c_y: " + Convert.ToString(c_y));
+      //System.Diagnostics.Debug.WriteLine("c_z: " + Convert.ToString(c_z));
       var res = new Matrix<double>(3, 1);
       res[0, 0] = c_x;
       res[1, 0] = c_y;
@@ -784,9 +783,9 @@ namespace ARKit
       VectorOfPoint3D32F objectCoords = new VectorOfPoint3D32F(new MCvPoint3D32f[]
       {
         new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, 1), // center
-        // new MCvPoint3D32f(this.BORDER[0].X, this.BORDER[2].Y/2, 1), // x-axis
-        // new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[0].Y, 1), // y-axis
-        // new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, 2), // z-axis
+        new MCvPoint3D32f(this.BORDER[0].X, this.BORDER[2].Y/2, 1), // x-axis
+        new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[0].Y, 1), // y-axis
+        // new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, -2), // z-axis
         new MCvPoint3D32f(this.BORDER[0].X, this.BORDER[0].Y, 1),
         new MCvPoint3D32f(this.BORDER[1].X, this.BORDER[1].Y, 1),
         new MCvPoint3D32f(this.BORDER[2].X, this.BORDER[2].Y, 1),
@@ -827,12 +826,12 @@ namespace ARKit
           });
         }
 
-        foundPose = CvInvoke.SolvePnP(objectCoords.ToArray(), imageCoords.ToArray(),
+        foundPose = CvInvoke.SolvePnP(objectCoords, imageCoords,
           cameraMat, distCoeffs, this._rotationMatrix, this._translationVector,
           this._useExtrinsicGuessForPnP, SolvePnpMethod.Iterative);
 
         if (this._useExtrinsicGuessForPnP == false)
-          this._useExtrinsicGuessForPnP = true;
+          this._useExtrinsicGuessForPnP = false;
 
         /*
         axes.Push(new System.Drawing.PointF[] {
@@ -929,6 +928,22 @@ namespace ARKit
         CvInvoke.ProjectPoints(objectCoords.ToArray(), rotationMat, translationVector, cameraMat, distCoeffs);
 
       CvInvoke.Line(dstFrame,
+        new System.Drawing.Point((int)imageCoords[4].X, (int)imageCoords[4].Y),
+        new System.Drawing.Point((int)imageCoords[5].X, (int)imageCoords[5].Y),
+        new Rgb(100, 100, 100).MCvScalar, 5);
+      CvInvoke.Line(dstFrame,
+        new System.Drawing.Point((int)imageCoords[4].X, (int)imageCoords[4].Y),
+        new System.Drawing.Point((int)imageCoords[6].X, (int)imageCoords[6].Y),
+        new Rgb(100, 100, 100).MCvScalar, 5);
+      CvInvoke.Line(dstFrame,
+        new System.Drawing.Point((int)imageCoords[6].X, (int)imageCoords[6].Y),
+        new System.Drawing.Point((int)imageCoords[7].X, (int)imageCoords[7].Y),
+        new Rgb(100, 100, 100).MCvScalar, 5);
+      CvInvoke.Line(dstFrame,
+        new System.Drawing.Point((int)imageCoords[5].X, (int)imageCoords[5].Y),
+        new System.Drawing.Point((int)imageCoords[7].X, (int)imageCoords[7].Y),
+        new Rgb(100, 100, 100).MCvScalar, 5);
+      CvInvoke.Line(dstFrame,
         new System.Drawing.Point((int)imageCoords[0].X, (int)imageCoords[0].Y),
         new System.Drawing.Point((int)imageCoords[1].X, (int)imageCoords[1].Y),
         new Rgb(0, 0, 255).MCvScalar, 10); // red - x (x in unity)
@@ -956,7 +971,6 @@ namespace ARKit
     private Mat _cameraMat, _distCoeffs;
     private VectorOfMat _rotationVectors, _translationVector;
     // private VectorOfVectorOfPointF _imageCoords;
-    private Mat _homography;
     private double _err;
 
     public InitialFrame(Camera cap, Size patternSize, float squareSize)
@@ -969,7 +983,6 @@ namespace ARKit
       this._distCoeffs = Mat.Zeros(5, 1, DepthType.Cv64F, 1);
       this._rotationVectors = new VectorOfMat();
       this._translationVector = new VectorOfMat();
-      this._homography = Mat.Zeros(3, 3, DepthType.Cv32F, 1);
       // this._imageCoords = new VectorOfVectorOfPointF();
     }
 
@@ -980,7 +993,6 @@ namespace ARKit
     public Mat DistortionCoefficients { get => this._distCoeffs; }
     public VectorOfMat RotationVectors { get => this._rotationVectors; }
     public VectorOfMat TranslationVector { get => this._translationVector; }
-    public Mat Homography { get => this._homography; }
     public bool IsCalibrated { get => this._calibrated; }
     public double Error { get => this._err; }
 
@@ -1028,20 +1040,17 @@ namespace ARKit
       this._rotationVectors.Push(rvec);
       this._translationVector.Push(tvec);
 
-      this._homography = CvInvoke.FindHomography(objectCoords[0], imageCoords[0],
-        HomographyMethod.Ransac, RANSAC_REPROJECTION_THRESHOLD);
-
       /*
       this.SaveToFile(err, this._cameraMat, this._distCoeffs, this._rotationVectors,
       this._translationVector, objectCoord, this._imageCoords);
       */
 
-      this.SaveToFile(this._err, this._cameraMat, this._homography, this._distCoeffs);
+      this.SaveToFile(this._err, this._cameraMat, this._distCoeffs);
 
       this._calibrated = true;
     }
 
-    public void SaveToFile(double err, Mat camMat, Mat homographyMat, Mat distCoeffs)
+    public void SaveToFile(double err, Mat camMat, Mat distCoeffs)
     /*public void SaveToFile(double err, Mat camMat, Mat distCoeffs, VectorOfMat rvec,
       VectorOfMat tvec, VectorOfPoint3D32F objCoords, VectorOfVectorOfPointF imageCoords)*/
     {
@@ -1050,7 +1059,6 @@ namespace ARKit
       {
         fs.Write(err, "error");
         fs.Write(camMat, "cameraMatrix");
-        fs.Write(homographyMat, "homographyMatrix");
         fs.Write(distCoeffs, "distortionCoefficients");
         /*
          * TODO may need to store these for use in future
@@ -1072,7 +1080,6 @@ namespace ARKit
       {
         this._err = fs.GetNode("error").ReadDouble();
         fs.GetNode("cameraMatrix").ReadMat(this._cameraMat);
-        fs.GetNode("homographyMatrix").ReadMat(this._homography);
         fs.GetNode("distortionCoefficients").ReadMat(this._distCoeffs);
         fs.ReleaseAndGetString();
       }
@@ -1280,7 +1287,7 @@ namespace ARKit
               cam_mat[i, j] = val;
             }
           }
-          Emgu.CV.Matrix<double> proj_match = fp.projection_mat(H_mat, cam_mat);
+          //Emgu.CV.Matrix<double> proj_match = fp.projection_mat(H_mat, cam_mat);
         }
       }
 
@@ -1318,7 +1325,7 @@ namespace ARKit
               cam_mat[i, j] = val;
             }
           }
-          Emgu.CV.Matrix<double> proj_track = fp.projection_mat(H_mat, cam_mat);
+          //Emgu.CV.Matrix<double> proj_track = fp.projection_mat(H_mat, cam_mat);
 
         }
 
@@ -1428,7 +1435,7 @@ namespace ARKit
         ip.Start();
       }
 
-      fp = FeaturePoints.ReadData(keypointsFilePath, ip.Homography, false);
+      fp = FeaturePoints.ReadData(keypointsFilePath, false);
 
       for (int i = 0; ; i++)
       {
