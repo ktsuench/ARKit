@@ -1059,16 +1059,6 @@ namespace ARKit
 
       double fx, fy, cx, cy;
 
-      fx = this._cameraMat.GetValue(0, 0) * 2;
-      fy = this._cameraMat.GetValue(1, 1) * 2;
-      cx = this._cameraMat.GetValue(0, 2) * 2;
-      cy = this._cameraMat.GetValue(1, 2) * 2;
-
-      this._cameraMat.SetValue(0, 0, fx);
-      this._cameraMat.SetValue(1, 1, fy);
-      this._cameraMat.SetValue(0, 2, cx);
-      this._cameraMat.SetValue(1, 2, cy);
-
       this.SaveToFile(this._err, this._cameraMat, this._distCoeffs);
 
       this._calibrated = true;
