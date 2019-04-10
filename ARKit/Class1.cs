@@ -130,9 +130,8 @@ namespace ARKit
       this.unity = unity;
     }
 
-    public Camera(int cameraId = 0, bool unity = true) : this(cameraId, null, unity) { }
     public Camera(Size size, bool unity = true) : this(0, size, unity) { }
-    public Camera(bool unity) : this(0, unity) { }
+    public Camera(bool unity) : this(null, unity) { }
 
     public Frame GetNextFrame()
     {
@@ -609,7 +608,7 @@ namespace ARKit
           new System.Drawing.Point((int)this._borderPoints[3].X, (int)this._borderPoints[3].Y),
           new Rgb(255, 0, 0).MCvScalar, 5);
 
-        if (drawAxes && cameraMat != null && distCoeffs != null && rotationMat != null && translationVector != null)
+        if (drawAxes && cameraMat != null && rotationMat != null && translationVector != null)
         {
           this.DrawOrientationAxis(cameraMat, distCoeffs, rotationMat, translationVector, frame, out frame);
         }
@@ -785,7 +784,7 @@ namespace ARKit
         new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, 1), // center
         new MCvPoint3D32f(this.BORDER[0].X, this.BORDER[2].Y/2, 1), // x-axis
         new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[0].Y, 1), // y-axis
-        // new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, -2), // z-axis
+        //new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, -150), // z-axis
         new MCvPoint3D32f(this.BORDER[0].X, this.BORDER[0].Y, 1),
         new MCvPoint3D32f(this.BORDER[1].X, this.BORDER[1].Y, 1),
         new MCvPoint3D32f(this.BORDER[2].X, this.BORDER[2].Y, 1),
@@ -826,12 +825,21 @@ namespace ARKit
           });
         }
 
-        foundPose = CvInvoke.SolvePnP(objectCoords, imageCoords,
-          cameraMat, distCoeffs, this._rotationMatrix, this._translationVector,
-          this._useExtrinsicGuessForPnP, SolvePnpMethod.Iterative);
+        if (distCoeffs != null)
+        {
+          foundPose = CvInvoke.SolvePnP(objectCoords, imageCoords,
+            cameraMat, distCoeffs, this._rotationMatrix, this._translationVector,
+            this._useExtrinsicGuessForPnP, SolvePnpMethod.Iterative);
+        }
+        else
+        {
+          foundPose = CvInvoke.SolvePnP(objectCoords, imageCoords,
+            cameraMat, Mat.Zeros(4, 1, DepthType.Cv64F, 1), this._rotationMatrix, this._translationVector,
+            this._useExtrinsicGuessForPnP, SolvePnpMethod.Iterative);
+        }
 
         if (this._useExtrinsicGuessForPnP == false)
-          this._useExtrinsicGuessForPnP = false;
+          this._useExtrinsicGuessForPnP = true;
 
         /*
         axes.Push(new System.Drawing.PointF[] {
@@ -913,8 +921,8 @@ namespace ARKit
       VectorOfPoint3D32F objectCoords = new VectorOfPoint3D32F(new MCvPoint3D32f[]
       {
         new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, 1), // center
-        new MCvPoint3D32f(this.BORDER[0].X, this.BORDER[2].Y/2, 1), // x-axis
-        new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[0].Y, 1), // y-axis
+        new MCvPoint3D32f(this.BORDER[1].X, this.BORDER[2].Y/2, 1), // x-axis
+        new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[1].Y, 1), // y-axis
         new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, -150), // z-axis
         new MCvPoint3D32f(this.BORDER[0].X, this.BORDER[0].Y, 1),
         new MCvPoint3D32f(this.BORDER[1].X, this.BORDER[1].Y, 1),
@@ -923,9 +931,13 @@ namespace ARKit
       });
 
       dstFrame = srcFrame.Clone();
+      System.Drawing.PointF[] imageCoords;
 
-      System.Drawing.PointF[] imageCoords =
-        CvInvoke.ProjectPoints(objectCoords.ToArray(), rotationMat, translationVector, cameraMat, distCoeffs);
+      if (distCoeffs != null)
+        imageCoords = CvInvoke.ProjectPoints(objectCoords.ToArray(), rotationMat, translationVector, cameraMat, distCoeffs);
+      else
+        imageCoords = CvInvoke.ProjectPoints(objectCoords.ToArray(), rotationMat, translationVector, cameraMat, Mat.Zeros(4, 1, DepthType.Cv64F, 1));
+
 
       CvInvoke.Line(dstFrame,
         new System.Drawing.Point((int)imageCoords[4].X, (int)imageCoords[4].Y),
@@ -1044,6 +1056,18 @@ namespace ARKit
       this.SaveToFile(err, this._cameraMat, this._distCoeffs, this._rotationVectors,
       this._translationVector, objectCoord, this._imageCoords);
       */
+
+      double fx, fy, cx, cy;
+
+      fx = this._cameraMat.GetValue(0, 0) * 2;
+      fy = this._cameraMat.GetValue(1, 1) * 2;
+      cx = this._cameraMat.GetValue(0, 2) * 2;
+      cy = this._cameraMat.GetValue(1, 2) * 2;
+
+      this._cameraMat.SetValue(0, 0, fx);
+      this._cameraMat.SetValue(1, 1, fy);
+      this._cameraMat.SetValue(0, 2, cx);
+      this._cameraMat.SetValue(1, 2, cy);
 
       this.SaveToFile(this._err, this._cameraMat, this._distCoeffs);
 
@@ -1173,7 +1197,7 @@ namespace ARKit
 
     public static void RunChessboardDemo(Size patternSize)
     {
-      Camera capture = new Camera(0, false);
+      Camera capture = new Camera(0, unity: false);
       Frame frame;
       Image<Bgr, byte> img;
 
@@ -1209,7 +1233,7 @@ namespace ARKit
 
     public static void CalibrateCamera(Size patternSize, float squareSize)
     {
-      Camera capture = new Camera(0, false);
+      Camera capture = new Camera(0, unity: false);
       Image<Bgr, byte> img;
 
       String win1 = "Camera Calibration Demo";
