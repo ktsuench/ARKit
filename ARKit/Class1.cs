@@ -500,6 +500,12 @@ namespace ARKit
           this._previousPoints.Clear();
           this._previousBorderPoints.Clear();
         }
+
+        this._useExtrinsicGuessForPnP = false;
+        this._rotationMatrix.Dispose();
+        this._rotationMatrix = new Mat();
+        this._translationVector.Dispose();
+        this._translationVector = new Mat();
       }
     }
 
