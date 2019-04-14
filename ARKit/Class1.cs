@@ -936,7 +936,7 @@ namespace ARKit
         new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, 1), // center
         new MCvPoint3D32f(this.BORDER[1].X, this.BORDER[2].Y/2, 1), // x-axis
         new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[1].Y, 1), // y-axis
-        new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, -150), // z-axis
+        new MCvPoint3D32f(this.BORDER[1].X/2, this.BORDER[2].Y/2, -90), // z-axis
         new MCvPoint3D32f(this.BORDER[0].X, this.BORDER[0].Y, 1),
         new MCvPoint3D32f(this.BORDER[1].X, this.BORDER[1].Y, 1),
         new MCvPoint3D32f(this.BORDER[2].X, this.BORDER[2].Y, 1),
