@@ -97,11 +97,18 @@ namespace ARKit
   public class Size
   {
     private System.Drawing.Size _size;
+    private int _height;
+    private int _width;
 
-    public Size(int height, int width)
+    public Size(int width, int height)
     {
-      this._size = new System.Drawing.Size(height, width);
+      this._width = width;
+      this._height = height;
+      this._size = new System.Drawing.Size(width, height);
     }
+
+    public int Height { get => this._height; }
+    public int Width { get => this._width; }
 
     public System.Drawing.Size Dims => this._size;
   }
